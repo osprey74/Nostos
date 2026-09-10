@@ -3,7 +3,7 @@ resolver = "2"
 # ホスト検証可能な言語非依存ロジックのみをメンバーにする。
 # firmware/nostos-fw は Xtensa ターゲットのため exclude（ホスト cargo test を汚さない）。
 # 実機着手時（Phase 2）にビルド方針を firmware 側で確定する。
-members = ["crates/nostos-nav", "crates/nostos-meshtastic"]
+members = ["crates/nostos-nav", "crates/nostos-meshtastic", "crates/nostos-frame"]
 exclude = ["firmware/nostos-fw"]
 
 [workspace.package]
