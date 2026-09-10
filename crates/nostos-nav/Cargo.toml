@@ -1,0 +1,16 @@
+[package]
+name = "nostos-nav"
+version = "0.1.0"
+description = "言語非依存の帰路ナビ算出（haversine 距離・方位角・ブレッドクラム軌跡）。no_std / no-alloc。"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# no_std での三角関数・平方根。ESP32-S3 firmware でもホストテストでも共通。
+libm = "0.2"

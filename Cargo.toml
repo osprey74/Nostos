@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+# ホスト検証可能な言語非依存ロジックのみをメンバーにする。
+# firmware/nostos-fw は Xtensa ターゲットのため exclude（ホスト cargo test を汚さない）。
+# 実機着手時（Phase 2）にビルド方針を firmware 側で確定する。
+members = ["crates/nostos-nav", "crates/nostos-meshtastic"]
+exclude = ["firmware/nostos-fw"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/osprey74/Nostos"
+authors = ["osprey74"]
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
