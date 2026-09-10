@@ -26,8 +26,11 @@ static const uint8_t TX_CR         = 5;        // 4/5
 static const uint8_t TX_SYNC_WORD  = 0x3A;     // Nostos 独自ネット（規制対象外・両端一致）
 static const float   TCXO_VOLT     = 3.0f;     // DIO3 TCXO
 
-// ---- LBT（キャリアセンス）: ARIB STD-T108。閾値・窓は保守的な既定（要 T108/認証カテゴリ確認） ----
-static const float    CS_THRESHOLD_DBM = -80.0f; // これ以上の RSSI は「混雑」→送信しない ※要確認
+// ---- LBT（キャリアセンス）: ARIB STD-T108 v1.5 Part2(20mW以下・CSあり)で確定。本方式で統一 ----
+//   §3.4.2: 閾値 -80dBm（受信電力 >= -80dBm なら送信禁止。出力20mW超で更に低下＝Nostosは≤5mWゆえ据置）
+//           時間 >=128μs。§3.4.1(2): 連続送信 <400ms・総量 <=360s/時。
+//   ※Part3 LDC(CS不要)は不採用。毎送信でキャリアセンスを行う（docs/COMPLIANCE.md §2.5）。
+static const float    CS_THRESHOLD_DBM = -80.0f; // これ以上の RSSI は「混雑」→送信しない（原典確定値）
 static const uint32_t CS_LISTEN_US     = 300;    // リッスン窓（規定 ≥128μs に対し安全側）
 static const int      LBT_MAX_TRIES    = 3;      // 混雑時の再試行回数
 static const uint32_t LBT_BACKOFF_MS   = 3000;   // 全滅時に次サイクルまで待つ
