@@ -1,0 +1,597 @@
+<title>Nostos UI プレビュー — C6L ＋ PaperMono</title>
+<style>
+  :root {
+    --ground: #0e1c22;
+    --ground-2: #12262e;
+    --text: #e7e1d0;
+    --text-dim: #9aa8a2;
+    --accent: #e6a233;
+    --accent-2: #5f9b8f;
+    --hair: #24413f;
+
+    /* e-ink 4 階調（紙） */
+    --paper: #e4e1d6;
+    --ink-l1: #a9a79c;
+    --ink-l2: #64635b;
+    --ink-l3: #23221d;
+
+    /* OLED モノクロ蛍光 */
+    --oled-bg: #05080a;
+    --oled-fg: #cfeee2;
+    --oled-dim: #4d6f68;
+
+    --serif: Georgia, "Times New Roman", serif;
+    --sans: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    --mono: "Consolas", "SF Mono", ui-monospace, "DejaVu Sans Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(120% 80% at 50% -10%, #14303a 0%, var(--ground) 55%, #0a151a 100%);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 3.2rem 1.5rem 4rem; }
+
+  /* ---- header ---- */
+  header { margin-bottom: 3.4rem; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.42em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin: 0 0 1rem;
+  }
+  .wordmark {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: clamp(2.6rem, 8vw, 5.2rem);
+    letter-spacing: 0.14em;
+    line-height: 0.95;
+    margin: 0;
+    color: var(--text);
+  }
+  .wordmark .lat {
+    display: block;
+    font-family: var(--mono);
+    font-weight: 400;
+    font-size: 0.9rem;
+    letter-spacing: 0.5em;
+    color: var(--accent);
+    margin-top: 0.9rem;
+    text-transform: uppercase;
+  }
+  .lede {
+    max-width: 46ch;
+    margin: 1.4rem 0 0;
+    color: var(--text-dim);
+    font-size: 1rem;
+  }
+
+  /* bearing ribbon */
+  .ribbon {
+    margin-top: 2rem;
+    height: 34px;
+    border-top: 1px solid var(--hair);
+    border-bottom: 1px solid var(--hair);
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow: hidden;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+  }
+  .ribbon span {
+    flex: 1 0 auto;
+    text-align: center;
+    padding: 0 0.9rem;
+    border-right: 1px solid var(--hair);
+    white-space: nowrap;
+  }
+  .ribbon .card { color: var(--accent-2); }
+
+  /* ---- section scaffolding ---- */
+  .app { margin-top: 3.6rem; }
+  .app-head { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.6rem; }
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    color: var(--ground);
+    background: var(--accent);
+    padding: 0.25rem 0.7rem;
+    border-radius: 2px;
+    text-transform: uppercase;
+  }
+  .app-head h2 {
+    font-family: var(--serif);
+    font-size: clamp(1.5rem, 3.6vw, 2.1rem);
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+  .app-head p { margin: 0; color: var(--text-dim); font-size: 0.92rem; }
+
+  /* ---- C6L ---- */
+  .c6l-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+  }
+  .oled-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .oled-card { flex: 1 1 150px; }
+  .oled-name {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.28em;
+    color: var(--accent-2);
+    text-transform: uppercase;
+    margin: 0 0 0.55rem;
+  }
+  .oled {
+    background: var(--oled-bg);
+    border: 1px solid #1c3630;
+    border-radius: 8px;
+    padding: 0.85rem 0.9rem;
+    box-shadow: inset 0 0 22px rgba(80, 200, 170, 0.08), 0 6px 18px rgba(0,0,0,0.35);
+    font-family: var(--mono);
+    color: var(--oled-fg);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    min-height: 118px;
+  }
+  .oled .big { font-size: 1.05rem; letter-spacing: 0.04em; }
+  .oled .dim { color: var(--oled-dim); }
+  .oled .glow { color: #eafff7; text-shadow: 0 0 6px rgba(150, 240, 210, 0.55); }
+  .oled .bar { color: var(--oled-dim); letter-spacing: -0.06em; }
+
+  .panel {
+    border: 1px solid var(--hair);
+    border-radius: 8px;
+    background: linear-gradient(180deg, var(--ground-2), transparent);
+    padding: 1.2rem 1.3rem;
+  }
+  .panel h3 {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin: 0 0 0.9rem;
+  }
+  .panel h3.second { margin-top: 1.6rem; }
+  .kv { list-style: none; margin: 0; padding: 0; }
+  .kv li {
+    display: grid;
+    grid-template-columns: minmax(88px, auto) 1fr;
+    gap: 0.9rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed var(--hair);
+    font-size: 0.9rem;
+  }
+  .kv li:last-child { border-bottom: 0; }
+  .kv .k {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+  .kv .v { color: var(--text); }
+  .kv .v small { color: var(--text-dim); }
+
+  /* ---- PaperMono ---- */
+  .paper-row {
+    display: flex;
+    gap: 2.4rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .device { flex: 0 1 340px; max-width: 360px; }
+  .bezel {
+    background: linear-gradient(160deg, #2a2f30, #171b1c);
+    border-radius: 20px;
+    padding: 16px 16px 22px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  .bezel svg { width: 100%; height: auto; display: block; border-radius: 6px; }
+  .bezel .chin {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 12px;
+  }
+  .chin .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a4142; }
+  .chin .led { background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
+  .chin .btn { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.08em; color: #9aa8a2; border: 1px solid #3a4142; border-radius: 4px; padding: 1px 8px; }
+  .device figcaption {
+    text-align: center;
+    margin-top: 1rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+  }
+  .device figcaption b { display: block; font-family: var(--sans); font-size: 0.95rem; letter-spacing: 0; text-transform: none; color: var(--text); margin-top: 0.35rem; font-weight: 600; }
+  .device figcaption span { color: var(--text-dim); }
+
+  /* e-ink SVG text roles */
+  .e-mono { font-family: var(--mono); }
+  .e-sans { font-family: var(--sans); }
+
+  .beacon { transform-origin: center; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .beacon-ring { animation: pulse 2.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .beacon-ring { animation: none; } }
+
+  footer {
+    margin-top: 3.8rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--hair);
+    color: var(--text-dim);
+    font-size: 0.82rem;
+  }
+  footer code { font-family: var(--mono); color: var(--accent-2); }
+
+  @media (max-width: 720px) {
+    .c6l-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Offline Return-Navigation · UI 仕様プレビュー</p>
+    <h1 class="wordmark">ΝΟΣΤΟΣ<span class="lat">Nostos — 帰路ナビ</span></h1>
+    <p class="lede">携行する C6L が毎分ブロードキャストする位置を、据置または携行の PaperMono が受信し、たどった経路と出発点への帰路を描く。2 台で 1 組の画面設計。</p>
+    <div class="ribbon" aria-hidden="true">
+      <span class="card">N 000°</span><span>045°</span><span class="card">E 090°</span><span>135°</span><span class="card">S 180°</span><span>210° SW</span><span class="card">W 270°</span><span>315°</span><span class="card">N 360°</span>
+    </div>
+  </header>
+
+  <!-- =============== APP A : C6L =============== -->
+  <section class="app">
+    <div class="app-head">
+      <span class="tag">App A</span>
+      <h2>C6L 送信機</h2>
+      <p>0.66&quot; OLED ＋ ブザー ＋ ボタン1個・GPS 携行</p>
+    </div>
+
+    <div class="c6l-grid">
+      <div>
+        <div class="oled-row">
+          <div class="oled-card">
+            <p class="oled-name">① Status</p>
+            <div class="oled">
+              <div class="big glow">SAT 9 &nbsp;FIX ●</div>
+              <div>seq 042</div>
+              <div>LBT <span class="glow">free</span></div>
+              <div class="dim">14:32:07 JST</div>
+            </div>
+          </div>
+          <div class="oled-card">
+            <p class="oled-name">② Position</p>
+            <div class="oled">
+              <div class="dim">POSITION</div>
+              <div class="big glow">N35.68123</div>
+              <div class="big glow">E139.76712</div>
+              <div class="dim">alt 24m · SAT 9</div>
+            </div>
+          </div>
+          <div class="oled-card">
+            <p class="oled-name">③ Home / 帰路</p>
+            <div class="oled">
+              <div>→ HOME</div>
+              <div class="big glow">1.24 km</div>
+              <div>BRG 210° SW</div>
+              <div class="dim">crs 195°</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>ボタン（GPIO9）</h3>
+        <ul class="kv">
+          <li><span class="k">短押し</span><span class="v">OLED ページ送り <small>Status→Position→Home</small></span></li>
+          <li><span class="k">長押し 2s</span><span class="v">出発地点(HOME)を確定 <small>基準点保存・seq リセット</small></span></li>
+          <li><span class="k">ダブル</span><span class="v">任意発信 <small>合流目印・テスト（LBT を通す）</small></span></li>
+        </ul>
+        <h3 class="second">ブザー（GPIO11）</h3>
+        <ul class="kv">
+          <li><span class="k">ピッ</span><span class="v">送信成功</span></li>
+          <li><span class="k">ピピッ</span><span class="v">GPS fix 獲得</span></li>
+          <li><span class="k">ププッ</span><span class="v">LBT busy＝送信見送り</span></li>
+          <li><span class="k">ピーッ</span><span class="v">HOME 確定</span></li>
+        </ul>
+        <h3 class="second">青 LED（ボタン内蔵）<small style="color:var(--text-dim);font-family:var(--sans);letter-spacing:0;text-transform:none;"> — 消音時の視覚版</small></h3>
+        <ul class="kv">
+          <li><span class="k">遅い点滅</span><span class="v">GPS 探索中（no fix）</span></li>
+          <li><span class="k">消灯</span><span class="v">fix 確立・待機</span></li>
+          <li><span class="k">1回閃光</span><span class="v">送信成功</span></li>
+          <li><span class="k">速い2回</span><span class="v">LBT busy</span></li>
+          <li><span class="k">1秒点灯</span><span class="v">HOME 確定</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- =============== APP B : PaperMono =============== -->
+  <section class="app">
+    <div class="app-head">
+      <span class="tag">App B</span>
+      <h2>PaperMono 受信機</h2>
+      <p>3.97&quot; 480×800 4 階調 e-ink・タッチ／据置 or 携行</p>
+    </div>
+
+    <div class="paper-row">
+      <!-- Screen 1 : Trail -->
+      <figure class="device" style="margin:0;">
+        <div class="bezel">
+          <svg viewBox="0 0 480 800" role="img" aria-label="軌跡マップ画面">
+            <defs>
+              <pattern id="grid1" width="48" height="48" patternUnits="userSpaceOnUse">
+                <path d="M48 0H0V48" fill="none" stroke="#c9c6bb" stroke-width="1"/>
+              </pattern>
+            </defs>
+            <rect x="0" y="0" width="480" height="800" fill="#e4e1d6"/>
+
+            <!-- status bar -->
+            <rect x="0" y="0" width="480" height="64" fill="#e4e1d6"/>
+            <text x="20" y="40" class="e-mono" font-size="26" letter-spacing="2" fill="#23221d">NOSTOS</text>
+            <text x="460" y="30" class="e-mono" font-size="17" text-anchor="end" fill="#23221d">14:32 · 78%</text>
+            <text x="460" y="52" class="e-mono" font-size="16" text-anchor="end" fill="#64635b">● 受信 0:18 前</text>
+            <line x1="0" y1="64" x2="480" y2="64" stroke="#64635b" stroke-width="2"/>
+
+            <!-- grid -->
+            <rect x="0" y="66" width="480" height="622" fill="url(#grid1)"/>
+
+            <!-- north indicator -->
+            <g transform="translate(44,104)">
+              <line x1="0" y1="16" x2="0" y2="-12" stroke="#23221d" stroke-width="2"/>
+              <path d="M0 -18 L5 -8 L-5 -8 Z" fill="#23221d"/>
+              <text x="0" y="34" class="e-mono" font-size="16" text-anchor="middle" fill="#23221d">N</text>
+            </g>
+
+            <!-- trail: dashed connectors -->
+            <polyline points="96,600 150,556 138,486 205,440 276,452 300,372 250,318 322,262"
+              fill="none" stroke="#23221d" stroke-width="2.4" stroke-dasharray="7 5" stroke-linejoin="round"/>
+
+            <!-- waypoints 2..7 -->
+            <g class="e-mono" font-size="15" fill="#23221d">
+              <circle cx="150" cy="556" r="6.5" fill="#e4e1d6" stroke="#23221d" stroke-width="2"/><text x="163" y="561">2</text>
+              <circle cx="138" cy="486" r="6.5" fill="#e4e1d6" stroke="#23221d" stroke-width="2"/><text x="151" y="491">3</text>
+              <circle cx="205" cy="440" r="6.5" fill="#e4e1d6" stroke="#23221d" stroke-width="2"/><text x="218" y="445">4</text>
+              <circle cx="276" cy="452" r="6.5" fill="#e4e1d6" stroke="#23221d" stroke-width="2"/><text x="289" y="457">5</text>
+              <circle cx="300" cy="372" r="6.5" fill="#e4e1d6" stroke="#23221d" stroke-width="2"/><text x="313" y="377">6</text>
+              <circle cx="250" cy="318" r="6.5" fill="#e4e1d6" stroke="#23221d" stroke-width="2"/><text x="263" y="323">7</text>
+            </g>
+
+            <!-- departure (1) : house -->
+            <g transform="translate(96,600)">
+              <path d="M-11 3 L0 -9 L11 3 L11 14 L-11 14 Z" fill="#e4e1d6" stroke="#23221d" stroke-width="2.2"/>
+              <text x="-16" y="6" class="e-mono" font-size="15" text-anchor="end" fill="#23221d">1</text>
+              <text x="0" y="34" class="e-mono" font-size="13" text-anchor="middle" fill="#64635b">出発</text>
+            </g>
+
+            <!-- current (8) : filled disc -->
+            <g transform="translate(322,262)">
+              <circle r="10" fill="#23221d"/>
+              <circle r="4" fill="#e4e1d6"/>
+              <text x="16" y="5" class="e-mono" font-size="15" fill="#23221d">8</text>
+              <text x="0" y="-18" class="e-mono" font-size="13" text-anchor="middle" fill="#64635b">現在地</text>
+            </g>
+
+            <!-- scale bar -->
+            <g transform="translate(40,656)">
+              <line x1="0" y1="0" x2="120" y2="0" stroke="#23221d" stroke-width="2"/>
+              <line x1="0" y1="-5" x2="0" y2="5" stroke="#23221d" stroke-width="2"/>
+              <line x1="120" y1="-5" x2="120" y2="5" stroke="#23221d" stroke-width="2"/>
+              <text x="60" y="-9" class="e-mono" font-size="14" text-anchor="middle" fill="#23221d">200 m</text>
+            </g>
+
+            <!-- bottom status -->
+            <line x1="0" y1="688" x2="480" y2="688" stroke="#64635b" stroke-width="2"/>
+            <text x="20" y="718" class="e-mono" font-size="18" fill="#23221d">C6L  N35.68123  E139.76712</text>
+            <text x="20" y="744" class="e-mono" font-size="16" fill="#64635b">SAT 9 · 最終 0:18 前 · RSSI −84 dBm</text>
+
+            <!-- tab bar (軌跡 active) -->
+            <line x1="0" y1="760" x2="480" y2="760" stroke="#64635b" stroke-width="2"/>
+            <rect x="0" y="760" width="160" height="40" fill="#23221d"/>
+            <text x="80" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#e4e1d6" font-weight="700">軌跡</text>
+            <text x="240" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#64635b">帰路</text>
+            <text x="400" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#64635b">設定</text>
+            <line x1="160" y1="760" x2="160" y2="800" stroke="#64635b" stroke-width="2"/>
+            <line x1="320" y1="760" x2="320" y2="800" stroke="#64635b" stroke-width="2"/>
+          </svg>
+          <div class="chin"><span class="btn">A ▲</span><span class="dot led"></span><span class="btn">B ▼</span></div>
+        </div>
+        <figcaption>Screen 1<b>軌跡マップ</b><span>North-up · 破線で結び取得順に連番</span></figcaption>
+      </figure>
+
+      <!-- Screen 2 : Homing -->
+      <figure class="device" style="margin:0;">
+        <div class="bezel">
+          <svg viewBox="0 0 480 800" role="img" aria-label="帰路ナビ画面">
+            <defs>
+              <pattern id="grid2" width="48" height="48" patternUnits="userSpaceOnUse">
+                <path d="M48 0H0V48" fill="none" stroke="#c9c6bb" stroke-width="1"/>
+              </pattern>
+            </defs>
+            <rect x="0" y="0" width="480" height="800" fill="#e4e1d6"/>
+
+            <!-- status bar -->
+            <text x="20" y="40" class="e-mono" font-size="26" letter-spacing="2" fill="#23221d">NOSTOS</text>
+            <text x="460" y="30" class="e-mono" font-size="17" text-anchor="end" fill="#23221d">14:32 · 78%</text>
+            <text x="460" y="52" class="e-mono" font-size="16" text-anchor="end" fill="#64635b">携行モード</text>
+            <line x1="0" y1="64" x2="480" y2="64" stroke="#64635b" stroke-width="2"/>
+
+            <!-- grid -->
+            <rect x="0" y="66" width="480" height="622" fill="url(#grid2)"/>
+
+            <!-- north indicator -->
+            <g transform="translate(44,104)">
+              <line x1="0" y1="16" x2="0" y2="-12" stroke="#23221d" stroke-width="2"/>
+              <path d="M0 -18 L5 -8 L-5 -8 Z" fill="#23221d"/>
+              <text x="0" y="34" class="e-mono" font-size="16" text-anchor="middle" fill="#23221d">N</text>
+            </g>
+
+            <!-- range rings centered on current -->
+            <g fill="none" stroke="#cbc8bd" stroke-width="1.4" stroke-dasharray="3 5">
+              <circle cx="240" cy="400" r="80"/>
+              <circle cx="240" cy="400" r="150"/>
+              <circle cx="240" cy="400" r="220"/>
+            </g>
+
+            <!-- traveled path (来た道) in light gray, from departure to current -->
+            <polyline points="140,573 176,524 150,472 205,450 232,428 240,400"
+              fill="none" stroke="#9c9a8f" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+            <g fill="#9c9a8f">
+              <circle cx="176" cy="524" r="4"/>
+              <circle cx="150" cy="472" r="4"/>
+              <circle cx="205" cy="450" r="4"/>
+              <circle cx="232" cy="428" r="4"/>
+            </g>
+
+            <!-- direct bearing line current -> home (210° SW = down-left) -->
+            <line x1="240" y1="400" x2="140" y2="573" stroke="#23221d" stroke-width="2.2" stroke-dasharray="8 5"/>
+
+            <!-- current at center -->
+            <g transform="translate(240,400)">
+              <circle r="11" fill="#23221d"/>
+              <circle r="4.5" fill="#e4e1d6"/>
+              <text x="0" y="-20" class="e-mono" font-size="14" text-anchor="middle" fill="#64635b">現在地</text>
+            </g>
+
+            <!-- home marker -->
+            <g transform="translate(140,573)">
+              <g class="beacon-ring">
+                <circle r="20" fill="none" stroke="#23221d" stroke-width="1.4" stroke-dasharray="2 4"/>
+              </g>
+              <path d="M-12 4 L0 -10 L12 4 L12 16 L-12 16 Z" fill="#23221d" stroke="#23221d" stroke-width="2"/>
+              <path d="M-6 16 L-6 6 L6 6 L6 16 Z" fill="#e4e1d6"/>
+              <text x="0" y="-24" class="e-sans" font-size="17" text-anchor="middle" fill="#23221d" font-weight="700">出発地点</text>
+              <text x="0" y="42" class="e-mono" font-size="22" text-anchor="middle" fill="#23221d">1.24 km</text>
+              <text x="0" y="62" class="e-mono" font-size="15" text-anchor="middle" fill="#64635b">BRG 210° SW</text>
+            </g>
+
+            <!-- bottom status -->
+            <line x1="0" y1="688" x2="480" y2="688" stroke="#64635b" stroke-width="2"/>
+            <text x="20" y="718" class="e-mono" font-size="18" fill="#23221d">現在 N35.68123 E139.76712</text>
+            <text x="20" y="744" class="e-mono" font-size="16" fill="#64635b">course 195° · 最終 0:18 前 · RSSI −84 dBm</text>
+
+            <!-- tab bar (帰路 active) -->
+            <line x1="0" y1="760" x2="480" y2="760" stroke="#64635b" stroke-width="2"/>
+            <rect x="160" y="760" width="160" height="40" fill="#23221d"/>
+            <text x="80" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#64635b">軌跡</text>
+            <text x="240" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#e4e1d6" font-weight="700">帰路</text>
+            <text x="400" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#64635b">設定</text>
+            <line x1="160" y1="760" x2="160" y2="800" stroke="#64635b" stroke-width="2"/>
+            <line x1="320" y1="760" x2="320" y2="800" stroke="#64635b" stroke-width="2"/>
+          </svg>
+          <div class="chin"><span class="btn">A ▲</span><span class="dot led"></span><span class="btn">B ▼</span></div>
+        </div>
+        <figcaption>Screen 2<b>帰路ナビ</b><span>薄墨＝来た道 · 濃い破線＝直線の帰路方位</span></figcaption>
+      </figure>
+
+      <!-- Screen 3 : Settings / Frontlight -->
+      <figure class="device" style="margin:0;">
+        <div class="bezel">
+          <svg viewBox="0 0 480 800" role="img" aria-label="設定・フロントライト画面">
+            <rect x="0" y="0" width="480" height="800" fill="#e4e1d6"/>
+
+            <!-- status bar -->
+            <text x="20" y="40" class="e-mono" font-size="26" letter-spacing="2" fill="#23221d">NOSTOS</text>
+            <text x="460" y="40" class="e-mono" font-size="17" text-anchor="end" fill="#23221d">14:32 · 78%</text>
+            <line x1="0" y1="64" x2="480" y2="64" stroke="#64635b" stroke-width="2"/>
+
+            <text x="20" y="112" class="e-sans" font-size="30" font-weight="700" fill="#23221d">設定</text>
+
+            <!-- Frontlight -->
+            <text x="20" y="162" class="e-sans" font-size="22" font-weight="700" fill="#23221d">フロントライト</text>
+            <!-- sun icon -->
+            <g transform="translate(432,150)" stroke="#23221d" stroke-width="2" fill="none">
+              <circle r="9" fill="#23221d" stroke="none"/>
+              <g stroke-linecap="round">
+                <line x1="0" y1="-15" x2="0" y2="-20"/><line x1="0" y1="15" x2="0" y2="20"/>
+                <line x1="-15" y1="0" x2="-20" y2="0"/><line x1="15" y1="0" x2="20" y2="0"/>
+                <line x1="-11" y1="-11" x2="-15" y2="-15"/><line x1="11" y1="11" x2="15" y2="15"/>
+                <line x1="11" y1="-11" x2="15" y2="-15"/><line x1="-11" y1="11" x2="-15" y2="15"/>
+              </g>
+            </g>
+
+            <!-- brightness bars (5 steps, level 3/5 selected) -->
+            <g>
+              <rect x="70"  y="280" width="40" height="20" fill="#23221d"/>
+              <rect x="125" y="264" width="40" height="36" fill="#23221d"/>
+              <rect x="180" y="248" width="40" height="52" fill="#23221d"/>
+              <rect x="235" y="232" width="40" height="68" fill="#d6d3c8" stroke="#a9a79c" stroke-width="1.5"/>
+              <rect x="290" y="216" width="40" height="84" fill="#d6d3c8" stroke="#a9a79c" stroke-width="1.5"/>
+            </g>
+            <text x="40"  y="316" class="e-mono" font-size="14" fill="#64635b">OFF</text>
+            <text x="350" y="316" class="e-mono" font-size="14" fill="#64635b">最大</text>
+            <!-- selection pointer under bar 3 -->
+            <path d="M200 322 L207 334 L193 334 Z" fill="#23221d"/>
+
+            <text x="20" y="366" class="e-sans" font-size="19" fill="#23221d">現在　<tspan font-weight="700">中（3 / 5）</tspan></text>
+            <text x="20" y="396" class="e-mono" font-size="16" fill="#64635b">A ▲ 明るく ／ B ▼ 暗く</text>
+
+            <line x1="20" y1="420" x2="460" y2="420" stroke="#c9c6bb" stroke-width="1.5"/>
+
+            <!-- auto-off -->
+            <rect x="24" y="440" width="24" height="24" rx="3" fill="#e4e1d6" stroke="#23221d" stroke-width="2"/>
+            <path d="M30 452 L36 458 L44 446" fill="none" stroke="#23221d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <text x="60" y="459" class="e-sans" font-size="18" fill="#23221d">自動消灯：無操作 30 秒で OFF</text>
+
+            <line x1="20" y1="486" x2="460" y2="486" stroke="#64635b" stroke-width="2"/>
+
+            <!-- LED legend -->
+            <text x="20" y="528" class="e-sans" font-size="22" font-weight="700" fill="#23221d">通知 LED（左側面）</text>
+            <g class="e-sans" font-size="18" fill="#23221d">
+              <circle cx="36" cy="559" r="8" fill="none" stroke="#23221d" stroke-width="2"/><text x="56" y="565">緑 点滅　新規フレーム受信</text>
+              <circle cx="36" cy="595" r="8" fill="none" stroke="#23221d" stroke-width="2" stroke-dasharray="3 3"/><text x="56" y="601">橙 点滅　受信途絶（リンク注意）</text>
+              <circle cx="36" cy="631" r="8" fill="#23221d"/><text x="56" y="637">赤 点滅　低電池</text>
+              <circle cx="36" cy="667" r="8" fill="#64635b"/><text x="56" y="673">青 点灯　充電中 / USB 給電</text>
+            </g>
+
+            <!-- bottom hint -->
+            <line x1="0" y1="688" x2="480" y2="688" stroke="#64635b" stroke-width="2"/>
+            <text x="20" y="720" class="e-mono" font-size="15" fill="#64635b">優先度：赤 ＞ 橙 ＞ 緑 ＞ 青</text>
+
+            <!-- tab bar (設定 active) -->
+            <line x1="0" y1="760" x2="480" y2="760" stroke="#64635b" stroke-width="2"/>
+            <rect x="320" y="760" width="160" height="40" fill="#23221d"/>
+            <text x="80"  y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#64635b">軌跡</text>
+            <text x="240" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#64635b">帰路</text>
+            <text x="400" y="786" class="e-sans" font-size="18" text-anchor="middle" fill="#e4e1d6" font-weight="700">設定</text>
+            <line x1="160" y1="760" x2="160" y2="800" stroke="#64635b" stroke-width="2"/>
+            <line x1="320" y1="760" x2="320" y2="800" stroke="#64635b" stroke-width="2"/>
+          </svg>
+          <div class="chin"><span class="btn">A ▲</span><span class="dot led"></span><span class="btn">B ▼</span></div>
+        </div>
+        <figcaption>Screen 3<b>設定 / フロントライト</b><span>A/B で明るさ · 通知 LED 凡例</span></figcaption>
+      </figure>
+    </div>
+
+    <div class="panel" style="margin-top:2.2rem;">
+      <h3>PaperMono の操作（物理ボタン ＋ タッチ）</h3>
+      <ul class="kv">
+        <li><span class="k">ボタン A ▲</span><span class="v">グリッド拡大 <small>UP・軌跡／帰路の両画面</small></span></li>
+        <li><span class="k">ボタン B ▼</span><span class="v">グリッド縮小 <small>DOWN・スケールバーが連動</small></span></li>
+        <li><span class="k">下部タブ</span><span class="v">画面切替 <small>軌跡 ⇄ 帰路（タッチ）</small></span></li>
+        <li><span class="k">電源(赤)</span><span class="v">電源 / スリープ</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <p>方位は両機とも地磁気センサ非搭載のため <b>North-up 固定</b>。距離・絶対方位は現在座標と出発点から <code>haversine / bearing</code> で算出。送信フレームは <code>NostosFrame</code> 16 バイトのまま（衛星数は C6L OLED が自機 GPS を直読して表示）。仕様の一次情報は <code>docs/UI.md</code>。</p>
+  </footer>
+</div>
