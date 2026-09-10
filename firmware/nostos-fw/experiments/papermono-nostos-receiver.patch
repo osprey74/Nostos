@@ -1,0 +1,160 @@
+diff --git a/firmware/embassy-debug/Cargo.toml b/firmware/embassy-debug/Cargo.toml
+index f485c4d..1ff10e1 100644
+--- a/firmware/embassy-debug/Cargo.toml
++++ b/firmware/embassy-debug/Cargo.toml
+@@ -108,6 +108,10 @@ embedded-io-async = { version = "0.7", optional = true }
+ m5stack-papermono-lite = { path = "../../crates/m5stack-papermono-lite" }
+ m5stack-papermono = { path = "../../crates/m5stack-papermono", optional = true }
+ papermono-log = { path = "../../crates/papermono-log" }
++# Nostos (experimental cross-repo path deps): on-device decode + nav.
++nostos-meshtastic = { path = "../../../Nostos/crates/nostos-meshtastic" }
++nostos-frame = { path = "../../../Nostos/crates/nostos-frame" }
++nostos-nav = { path = "../../../Nostos/crates/nostos-nav" }
+ embedded-graphics = "0.8.2"
+ static_cell = "2.1.1"
+ 
+diff --git a/firmware/embassy-debug/src/lora.rs b/firmware/embassy-debug/src/lora.rs
+index 25938ef..3596c7c 100644
+--- a/firmware/embassy-debug/src/lora.rs
++++ b/firmware/embassy-debug/src/lora.rs
+@@ -232,6 +232,11 @@ static LORA_HW: embassy_sync::mutex::Mutex<
+     Option<LoraHardware>,
+ > = embassy_sync::mutex::Mutex::new(None);
+ 
++/// Nostos Step D: accumulated breadcrumb trail of received beacon positions.
++#[cfg(feature = "c153")]
++static NOSTOS_TRAIL: CriticalSectionMutex<RefCell<nostos_nav::Trail<64>>> =
++    CriticalSectionMutex::new(RefCell::new(nostos_nav::Trail::new()));
++
+ /// Stores initial presence status of the LoRa hardware.
+ pub fn init_status(available: bool) {
+     if available {
+@@ -317,15 +322,13 @@ pub fn card_state() -> LoraCardState {
+ pub fn current_sniffer_freq_hz() -> u32 {
+     #[cfg(feature = "c153")]
+     {
+-        if LORA_SNIFFER_SLOT.load(Ordering::Relaxed) == 0 {
+-            FREQ_RX_SNIFFER_PRI_HZ
+-        } else {
+-            FREQ_RX_SNIFFER_SEC_HZ
+-        }
++        // Nostos Phase 0: JP LongFast default channel (923.375 MHz).
++        let _ = LORA_SNIFFER_SLOT.load(Ordering::Relaxed);
++        923_375_000
+     }
+     #[cfg(not(feature = "c153"))]
+     {
+-        917_625_000
++        923_375_000
+     }
+ }
+ 
+@@ -549,13 +552,11 @@ pub async fn listen_rx(
+     let mut lock = LORA_HW.lock().await;
+     let hw = lock.as_mut().ok_or(-120i16)?;
+ 
+-    // Alternate sniffer frequency on consecutive taps:
+-    let slot = LORA_SNIFFER_SLOT.fetch_xor(1, Ordering::Relaxed);
+-    let target_freq = if slot == 0 {
+-        FREQ_RX_SNIFFER_PRI_HZ
+-    } else {
+-        FREQ_RX_SNIFFER_SEC_HZ
+-    };
++    // Nostos Step D (receiver): camp on the Nostos-native channel to receive the C6L beacon's
++    // NostosFrame. RF must match the beacon (firmware/c6l-beacon + crates/nostos-frame::radio):
++    // 923.000 MHz / BW125 / SF9 / CR4-5 / sync word logical 0x3A (encoded 0x34A4).
++    let _ = LORA_SNIFFER_SLOT.fetch_xor(1, Ordering::Relaxed);
++    let target_freq = 923_000_000u32;
+ 
+     set_listening_state(target_freq / 1_000);
+ 
+@@ -570,12 +571,12 @@ pub async fn listen_rx(
+     let _ = sx.calibrate_image(CAL_IMG_902_MHZ, CAL_IMG_928_MHZ);
+     let _ = sx.set_dio2_as_rf_switch_ctrl(true);
+ 
+-    // 2. Configure receiver parameters: SF11, BW 250 kHz (Meshtastic LongFast standard)
++    // 2. Configure receiver parameters: SF9 / BW125 / CR4-5 (Nostos-native, matches c6l-beacon).
+     let _ = sx.set_packet_type(PACKET_TYPE_LORA);
+     let _ = sx.set_rf_frequency(target_freq);
+-    let _ = sx.set_lora_modulation_params(LORA_SF11, LORA_BW_250_KHZ, LORA_CR_4_5, LORA_LDRO_OFF);
+-    let _ = sx.set_lora_packet_params(16, LORA_HEADER_VARIABLE, 255, LORA_CRC_ON, LORA_IQ_STANDARD);
+-    let _ = sx.set_lora_sync_word(SYNC_WORD_ALT);
++    let _ = sx.set_lora_modulation_params(lora::LORA_SF9, LORA_BW_125_KHZ, LORA_CR_4_5, LORA_LDRO_OFF);
++    let _ = sx.set_lora_packet_params(8, LORA_HEADER_VARIABLE, 255, LORA_CRC_ON, LORA_IQ_STANDARD);
++    let _ = sx.set_lora_sync_word(0x34A4); // logical sync word 0x3A (RadioLib setSyncWord(0x3A))
+ 
+     // 3. Clear IRQs and start continuous reception (0xFFFFFF = Rx Continuous):
+     let _ = sx.clear_irq_status(IRQ_ALL);
+@@ -591,9 +592,9 @@ pub async fn listen_rx(
+         Timer::after(Duration::from_millis(20)).await;
+     }
+ 
+-    // 5. Polling window (up to 60 seconds: 1200 x 50 ms):
++    // 5. Polling window (up to 90 seconds: 1800 x 50 ms) — margin over C6L's 60 s beacon interval:
+     let mut rx_done = false;
+-    for _ in 0..1200 {
++    for _ in 0..1800 {
+         Timer::after(Duration::from_millis(50)).await;
+ 
+         if let Ok(irq) = sx.get_irq_status() {
+@@ -617,12 +618,58 @@ pub async fn listen_rx(
+             signal_rssi_pkt_dbm: -100,
+         });
+ 
+-        let mut preview_buf = [0u8; 4];
+-        let _ = sx.read_buffer(start_ptr, &mut preview_buf);
++        // Nostos Phase 1: read the FULL payload (not just the 4-byte preview) for on-device decode.
++        let mut full_buf = [0u8; 256];
++        let n = (len as usize).min(256);
++        let _ = sx.read_buffer(start_ptr, &mut full_buf[..n]);
++        let preview_buf = [full_buf[0], full_buf[1], full_buf[2], full_buf[3]];
+ 
+         let _ = sx.set_standby(STDBY_CONFIG_RC);
+         power_down(i2c).await;
+ 
++        // Nostos Step D: decode the NostosFrame via the host-verified nostos-frame crate,
++        // then accumulate the position into the breadcrumb Trail and report homing. Serial-only.
++        {
++            use esp_println::println;
++            match nostos_frame::NostosFrame::decode(&full_buf[..n]) {
++                Ok(f) => {
++                    println!(
++                        "nostos-rx: seq={} fix={} lat_e7={} lon_e7={} time={} rssi={} snr={} len={}",
++                        f.seq,
++                        f.has_fix() as u8,
++                        f.lat_e7,
++                        f.lon_e7,
++                        f.time_unix,
++                        pkt_status.rssi_pkt_dbm,
++                        pkt_status.snr_pkt_db,
++                        n
++                    );
++                    if f.has_fix() {
++                        let p = f.geopoint();
++                        // Push to the trail; homing = distance/bearing back to the oldest point.
++                        let info = NOSTOS_TRAIL.lock(|c| {
++                            let mut t = c.borrow_mut();
++                            t.push(p);
++                            t.oldest().map(|home| {
++                                (
++                                    t.len(),
++                                    nostos_nav::haversine_m(p, home),
++                                    nostos_nav::bearing_deg(p, home),
++                                )
++                            })
++                        });
++                        if let Some((tl, dist_m, bearing)) = info {
++                            println!(
++                                "nostos-rx: trail={} home_dist_m={} home_bearing_deg={}",
++                                tl, dist_m as i32, bearing as i32
++                            );
++                        }
++                    }
++                }
++                Err(e) => println!("nostos-rx: decode err {:?}", e),
++            }
++        }
++
+         let sample = papermono_log::LoraRxSample {
+             freq_khz: target_freq / 1_000,
+             rssi: pkt_status.rssi_pkt_dbm,

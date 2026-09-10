@@ -17,6 +17,18 @@ papermono-rs の `embassy-debug` に当てた実験パッチを保存する。no
 > ⚠️ `nostos-meshtastic` を papermono-rs から参照するクロスリポジトリ path 依存を含む（実験用）。
 > nostos-fw 本実装では papermono-rs 側 bring-up を移植し、この path 依存は不要になる。
 
+## papermono-nostos-receiver.patch（Step D・受信側）
+
+stock `embassy-debug` を **Nostos-native 受信機**にするパッチ（`phase0-1` とは排他＝どちらか一方を当てる）。
+
+1. **RX を Nostos チャネルに固定** — `listen_rx` を **923.000 MHz / BW125 / SF9 / CR4-5 / sync word 0x3A(=reg 0x34A4)**
+   に設定（`firmware/c6l-beacon` / `crates/nostos-frame::radio` と一致）。フルペイロード読み出し。
+2. **`nostos-frame` でデコード** — `NostosFrame::decode` → `GeoPoint` → `nostos-nav::Trail` に push →
+   帰路（最古点への距離・方位）をシリアル出力（`nostos-rx: seq=… lat_e7=… rssi=… / trail=… home_dist_m=… home_bearing_deg=…`）。
+3. path 依存に `nostos-frame` / `nostos-nav` を追加。**受信のみ（送信なし＝技適対象外）**。
+
+> エンドツーエンド確認には送信側（`c6l-beacon`）が必要。ビーコンのボタン任意発信でテスト可。
+
 ## 実機検証結果（2026-09-10・PaperMono COM8 / C6L COM7）
 
 | portnum | 送信 | 受信・デコード結果 | 判定 |

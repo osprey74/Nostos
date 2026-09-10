@@ -43,13 +43,19 @@ impl GeoPoint {
         Self { lat, lon }
     }
 
-    /// Meshtastic Position の整数座標（度 ×1e7）から生成。
+    /// 度 ×1e7 の整数座標（`lat_e7`/`lon_e7`）から生成。Meshtastic Position や nostos-frame と共通の表現。
+    #[must_use]
+    pub fn from_e7(lat_e7: i32, lon_e7: i32) -> Self {
+        Self {
+            lat: f64::from(lat_e7) / 1e7,
+            lon: f64::from(lon_e7) / 1e7,
+        }
+    }
+
+    /// Meshtastic Position の整数座標（度 ×1e7）から生成。[`GeoPoint::from_e7`] の別名。
     #[must_use]
     pub fn from_meshtastic_i(latitude_i: i32, longitude_i: i32) -> Self {
-        Self {
-            lat: f64::from(latitude_i) / 1e7,
-            lon: f64::from(longitude_i) / 1e7,
-        }
+        Self::from_e7(latitude_i, longitude_i)
     }
 }
 

@@ -1,0 +1,16 @@
+[package]
+name = "nostos-frame"
+version = "0.1.0"
+description = "Nostos-native の生 LoRa 分報フレーム（位置＋時刻）コーデックと、技適順守の RF 定数（コンパイル時強制）。no_std。"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# 緯度経度→GeoPoint 変換で共通コアを再利用。
+nostos-nav = { path = "../nostos-nav" }
