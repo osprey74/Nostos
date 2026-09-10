@@ -1,0 +1,128 @@
+diff --git a/firmware/embassy-debug/Cargo.toml b/firmware/embassy-debug/Cargo.toml
+index f485c4d..a03e8aa 100644
+--- a/firmware/embassy-debug/Cargo.toml
++++ b/firmware/embassy-debug/Cargo.toml
+@@ -108,6 +108,8 @@ embedded-io-async = { version = "0.7", optional = true }
+ m5stack-papermono-lite = { path = "../../crates/m5stack-papermono-lite" }
+ m5stack-papermono = { path = "../../crates/m5stack-papermono", optional = true }
+ papermono-log = { path = "../../crates/papermono-log" }
++# Nostos Phase 1 (experimental cross-repo path dep): on-device Meshtastic decode.
++nostos-meshtastic = { path = "../../../Nostos/crates/nostos-meshtastic" }
+ embedded-graphics = "0.8.2"
+ static_cell = "2.1.1"
+ 
+diff --git a/firmware/embassy-debug/src/lora.rs b/firmware/embassy-debug/src/lora.rs
+index 25938ef..df316a8 100644
+--- a/firmware/embassy-debug/src/lora.rs
++++ b/firmware/embassy-debug/src/lora.rs
+@@ -317,15 +317,13 @@ pub fn card_state() -> LoraCardState {
+ pub fn current_sniffer_freq_hz() -> u32 {
+     #[cfg(feature = "c153")]
+     {
+-        if LORA_SNIFFER_SLOT.load(Ordering::Relaxed) == 0 {
+-            FREQ_RX_SNIFFER_PRI_HZ
+-        } else {
+-            FREQ_RX_SNIFFER_SEC_HZ
+-        }
++        // Nostos Phase 0: JP LongFast default channel (923.375 MHz).
++        let _ = LORA_SNIFFER_SLOT.load(Ordering::Relaxed);
++        923_375_000
+     }
+     #[cfg(not(feature = "c153"))]
+     {
+-        917_625_000
++        923_375_000
+     }
+ }
+ 
+@@ -549,13 +547,11 @@ pub async fn listen_rx(
+     let mut lock = LORA_HW.lock().await;
+     let hw = lock.as_mut().ok_or(-120i16)?;
+ 
+-    // Alternate sniffer frequency on consecutive taps:
+-    let slot = LORA_SNIFFER_SLOT.fetch_xor(1, Ordering::Relaxed);
+-    let target_freq = if slot == 0 {
+-        FREQ_RX_SNIFFER_PRI_HZ
+-    } else {
+-        FREQ_RX_SNIFFER_SEC_HZ
+-    };
++    // Nostos Phase 0 patch: camp on the JP LongFast default channel to catch C6L's 1/min Position.
++    // JP region 920.5-923.5 MHz, spacing 0, 12 channels; hash("LongFast")%12 = ch 11 -> 923.375 MHz.
++    // (see g:\dev\Nostos\docs\PHASE0.md). C6L: Region=JP / LONG_FAST / SF11 / BW250 / CR5.
++    let _ = LORA_SNIFFER_SLOT.fetch_xor(1, Ordering::Relaxed);
++    let target_freq = 923_375_000u32;
+ 
+     set_listening_state(target_freq / 1_000);
+ 
+@@ -591,9 +587,9 @@ pub async fn listen_rx(
+         Timer::after(Duration::from_millis(20)).await;
+     }
+ 
+-    // 5. Polling window (up to 60 seconds: 1200 x 50 ms):
++    // 5. Polling window (up to 90 seconds: 1800 x 50 ms) — margin over C6L's 60 s beacon interval:
+     let mut rx_done = false;
+-    for _ in 0..1200 {
++    for _ in 0..1800 {
+         Timer::after(Duration::from_millis(50)).await;
+ 
+         if let Ok(irq) = sx.get_irq_status() {
+@@ -617,12 +613,57 @@ pub async fn listen_rx(
+             signal_rssi_pkt_dbm: -100,
+         });
+ 
+-        let mut preview_buf = [0u8; 4];
+-        let _ = sx.read_buffer(start_ptr, &mut preview_buf);
++        // Nostos Phase 1: read the FULL payload (not just the 4-byte preview) for on-device decode.
++        let mut full_buf = [0u8; 256];
++        let n = (len as usize).min(256);
++        let _ = sx.read_buffer(start_ptr, &mut full_buf[..n]);
++        let preview_buf = [full_buf[0], full_buf[1], full_buf[2], full_buf[3]];
+ 
+         let _ = sx.set_standby(STDBY_CONFIG_RC);
+         power_down(i2c).await;
+ 
++        // Nostos Phase 1: decode the Meshtastic frame via the host-verified nostos-meshtastic crate
++        // (header -> AES-CTR decrypt with default channel key -> Data -> Position). Serial-only.
++        {
++            use esp_println::println;
++            match nostos_meshtastic::MeshHeader::parse(&full_buf[..n]) {
++                Ok(hdr) => {
++                    let plen = n.saturating_sub(nostos_meshtastic::HEADER_LEN);
++                    let (_h, payload) = full_buf.split_at_mut(nostos_meshtastic::HEADER_LEN);
++                    nostos_meshtastic::decrypt_in_place(
++                        &hdr,
++                        &nostos_meshtastic::DEFAULT_CHANNEL_KEY,
++                        &mut payload[..plen],
++                    );
++                    match nostos_meshtastic::Data::parse(&payload[..plen]) {
++                        Ok(data) => {
++                            println!(
++                                "nostos: rx from={:08x} id={:08x} ch_hash={:02x} port={} plen={}",
++                                hdr.from,
++                                hdr.packet_id,
++                                hdr.channel_hash,
++                                data.portnum,
++                                data.payload.len()
++                            );
++                            if data.portnum == nostos_meshtastic::PORTNUM_POSITION_APP {
++                                match nostos_meshtastic::Position::parse(data.payload) {
++                                    Ok(p) => println!(
++                                        "nostos: POSITION lat_i={} lon_i={} alt={:?} time={:?}",
++                                        p.latitude_i, p.longitude_i, p.altitude, p.time
++                                    ),
++                                    Err(e) => println!("nostos: position parse err {:?}", e),
++                                }
++                            } else {
++                                println!("nostos: payload={:02x?}", data.payload);
++                            }
++                        }
++                        Err(e) => println!("nostos: data parse err {:?}", e),
++                    }
++                }
++                Err(e) => println!("nostos: header parse err {:?}", e),
++            }
++        }
++
+         let sample = papermono_log::LoraRxSample {
+             freq_khz: target_freq / 1_000,
+             rssi: pkt_status.rssi_pkt_dbm,

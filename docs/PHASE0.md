@@ -111,12 +111,16 @@ RustCrypto の `Ctr128BE<Aes128>` に IV=nonce で一致（ペイロードは短
 
 ## Phase 段階と検証手段
 
-| Phase | 内容 | 検証 |
-| --- | --- | --- |
-| 0 | JP 周波数で C6L の毎分 LongFast を実受信（RSSI/長さ確認） | 実機 + `cargo xtask monitor`（CDC ログ） |
-| 1 | フルペイロード → 復号 → Position 抽出（時刻/緯度経度をシリアル出力） | **`nostos-meshtastic` はホスト `cargo test` で先行検証** → 実機で結線確認 |
-| 2 | e-ink にグリッド＋ブレッドクラム描画（SSD1677） | 実機目視 |
-| 3 | 帰路方向・距離（haversine/bearing） | **`nostos-nav` はホスト `cargo test` で検証済み** → 実機表示 |
+| Phase | 内容 | 検証 | 状況 |
+| --- | --- | --- | --- |
+| 0 | JP 周波数で C6L の LongFast を実受信（RSSI/長さ確認） | 実機 + `espflash monitor`（CDC） | ✅ **完了 2026-09-10**（923.375MHz / len32 / RSSI-29 / dest=broadcast） |
+| 1 | フルペイロード → 復号 → Position 抽出（シリアル出力） | `nostos-meshtastic` ホスト検証 → 実機結線 | ✅ **完了 2026-09-10**（text="nostos-now" / POSITION lat≈35.0 lon≈135.0） |
+| 2 | e-ink にグリッド＋ブレッドクラム描画（SSD1677） | 実機目視 | 未着手 |
+| 3 | 帰路方向・距離（haversine/bearing） | `nostos-nav` ホスト検証済 → 実機表示 | 未着手 |
 
 > Phase 1 の「難所（AES＋protobuf）」と Phase 3 の算出ロジックは**実機を待たずホストで確定**できる。
 > 実機依存（電源シーケンス・RX 結線・e-ink）だけを後段に残す設計。
+>
+> **Phase 0/1 実機検証の再現パッチ**: [`../firmware/nostos-fw/experiments/`](../firmware/nostos-fw/experiments/)
+> （papermono-rs embassy-debug に当てた JP 周波数＋フルペイロード＋`nostos-meshtastic` 復号）。
+> 既定鍵・nonce 構成は実機の text/Position 復号成功をもって**確定（確実性: 高）**。
