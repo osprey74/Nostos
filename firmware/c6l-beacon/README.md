@@ -25,8 +25,11 @@ GPS の位置＋時刻を **毎分 `NostosFrame`（16B）で送信**するビー
 
 ## 送信ロジック（LBT＋適応間隔＋ボタン）
 
-- **毎送信の前に RSSI キャリアセンス(LBT)**：`startReceive → RSSI 測定(≥128μs) → 閾値未満なら送信`。
-  混雑（RSSI ≥ 閾値）ならバックオフ再試行、全滅なら数秒後に再試行（ARIB STD-T108 混信回避）。
+- **毎送信の前に RSSI キャリアセンス(LBT)**：`startReceive → getRSSI(false) → -80dBm 未満なら送信`。
+  ⚠️ RadioLib は `getRSSI(true)`=last-packet（未受信で無効値 -0.5）/ `getRSSI(false)`=GetRssiInst 瞬時 RSSI。
+  **必ず false**。混雑（≥-80dBm）ならバックオフ再試行（ARIB STD-T108 §3.4.2 エネルギー検出）。
+  送信成功で `PIN_BUZZER` がビープ（動作確認用）。
+  ※卓上は近接機器のノイズでフロアが高く「busy」になりやすい。離隔・クリーン給電で -80dBm を下回れば送信（実機検証済み）。
 - **適応間隔**（固定/移動 両対応）：
   - **移動時**（前回送信位置から `MOVE_THRESHOLD_M`=30m 以上）→ 最短 `MIN_INTERVAL`=30s ごと。
   - **停止時** → `MAX_INTERVAL`=10分ごとのハートビートのみ（送信・LBT・電力を最小化）。

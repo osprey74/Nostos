@@ -31,7 +31,6 @@ static const float   TCXO_VOLT     = 3.0f;     // DIO3 TCXO
 //           時間 >=128μs。§3.4.1(2): 連続送信 <400ms・総量 <=360s/時。
 //   ※Part3 LDC(CS不要)は不採用。毎送信でキャリアセンスを行う（docs/COMPLIANCE.md §2.5）。
 static const float    CS_THRESHOLD_DBM = -80.0f; // これ以上の RSSI は「混雑」→送信しない（原典確定値）
-static const uint32_t CS_LISTEN_US     = 300;    // リッスン窓（規定 ≥128μs に対し安全側）
 static const int      LBT_MAX_TRIES    = 3;      // 混雑時の再試行回数
 static const uint32_t LBT_BACKOFF_MS   = 3000;   // 全滅時に次サイクルまで待つ
 
@@ -50,6 +49,7 @@ static const float    MOVE_THRESHOLD_M = 30.0f;          // 前回送信位置�
 #define PIN_GPS_RX    4   // ESP 受信（GPS-TX 接続）
 #define PIN_GPS_TX    5
 #define PIN_BUTTON    9   // BOOT/ユーザーボタン（active-low）
+#define PIN_BUZZER    11  // ブザー（送信確認用・variant.h）
 
 SX1262 radio = new Module(PIN_LORA_CS, PIN_LORA_DIO1, RADIOLIB_NC, PIN_LORA_BUSY);
 TinyGPSPlus gps;
@@ -85,11 +85,15 @@ static double dist_m(double la1, double lo1, double la2, double lo2) {
 // LBT: 送信前エネルギー検出（RSSI）キャリアセンス。空きなら true。
 // ※ RadioLib の RSSI 取得挙動は実機ビルド時に微調整前提（getRSSI の引数/タイミング）。
 static bool lbt_clear() {
+  // ARIB STD-T108 §3.4.2 エネルギー検出: RX 中に GetRssiInst で瞬時チャネル RSSI を読む。
+  // ※RadioLib の getRSSI(packet): true=last-packet RSSI / false=瞬時(GetRssiInst)。false を使う。
   radio.startReceive();
-  delayMicroseconds(CS_LISTEN_US);
-  float rssi = radio.getRSSI();
+  delay(5);                          // 受信機/RSSI 整定（>=128μs 要件も満たす）
+  float rssi = radio.getRSSI(false); // GetRssiInst=瞬時チャネル RSSI（エネルギー検出）
   radio.standby();
-  return rssi < CS_THRESHOLD_DBM;
+  bool free = rssi < CS_THRESHOLD_DBM;
+  Serial.printf("nostos-beacon: LBT rssi=%.0f dBm -> %s\n", rssi, free ? "free" : "busy");
+  return free;                       // < -80dBm なら空き
 }
 
 // LBT を挟んで 1 フレーム送信。成功で true。
@@ -99,6 +103,9 @@ static bool send_frame(bool fix, int32_t lat_e7, int32_t lon_e7, uint32_t t, con
   for (int i = 0; i < LBT_MAX_TRIES; i++) {
     if (lbt_clear()) {
       int st = radio.transmit(frame, NOSTOS_FRAME_LEN);
+      if (st == RADIOLIB_ERR_NONE) {
+        tone(PIN_BUZZER, 2500, 80);   // 送信成功をブザーで通知（窓際テスト用）
+      }
       Serial.printf("nostos-beacon: TX(%s) seq=%u fix=%d lat_e7=%ld lon_e7=%ld t=%lu st=%d\n",
                     why, seq, fix, (long)lat_e7, (long)lon_e7, (unsigned long)t, st);
       seq++;
