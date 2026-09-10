@@ -67,6 +67,48 @@ cargo xtask flash-app --image target/xtensa-esp32s3-none-elf/release-fw/embassy-
 cargo xtask monitor
 ```
 
+## 工場出荷イメージのバックアップ／復元 ★最初に必ず実施
+
+> **他のファームを焼く前に、現在フラッシュに入っている内容を丸ごと保存する。**
+> 保存せずに書き込むと元イメージは上書きされ、デバイス側からは復元できない。
+> **読み出し（read）は非破壊で安全。全消去（`espflash erase-flash`）は絶対に行わない。**
+
+### ダウンロードモードへ入れる（物理操作）
+
+電源ボタンを約2秒長押し → 赤 LED が点滅したらダウンロードモード。
+（GPIO0/3 はストラップ、GPIO45/46 は PDM マイク。自動リセットが効かない個体は手動長押しが確実。）
+
+### 方法A（推奨）: papermono-rs の xtask スナップショット
+
+`g:\dev\papermono-rs` で実行。board-info・パーティションマニフェスト付きで保存され、
+`confirm`（照合）・`restore`（書き戻し）まで一貫管理できる。保存先は
+`papermono-rs/developer-data/backups/`（Nostos リポジトリ外）。
+
+```powershell
+. $env:USERPROFILE\export-esp.ps1
+# 保存（この個体の原本として）
+cargo xtask backup-factory-firmware --as-original
+# 照合（ライブ flash と一致するか）
+cargo xtask confirm-factory-firmware
+# 後日、現在のファームに戻す
+cargo xtask restore-factory-firmware --yes
+```
+
+### 方法B（本リポジトリ内に単一イメージで保持）: espflash 直接
+
+フル 16MB を1ファイルとして Nostos の `backups/` に保存する。read は非破壊。
+イメージファイルは `.gitignore` 済み（コミットしない）。
+
+```powershell
+# フルフラッシュ読み出し（16MB = 0x1000000）。複数機接続時は --port COMx を指定。
+espflash read-flash 0 0x1000000 backups/papermono-factory-original-YYYY-MM-DD.bin
+
+# 後日、現在のファームに書き戻す（write。--yes 相当の確認に従う）
+espflash write-flash 0 backups/papermono-factory-original-YYYY-MM-DD.bin
+```
+
+> 方法A・B は排他ではない。まず方法Aで確実な原本を確保し、方法Bを可搬な単一バックアップとして併用してよい。
+
 ### ⚠️ フラッシュ 4 原則（papermono-rs getting-started より）
 
 1. **フラッシュ前に必ず出荷イメージを保存**。`espflash erase-flash` や全消去は避ける。

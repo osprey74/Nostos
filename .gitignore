@@ -19,6 +19,11 @@ dependencies.lock
 *.map
 *.uf2
 
+# デバイス工場出荷イメージのバックアップ（実機フラッシュのフルダンプ・コミット禁止）
+/backups/*
+!/backups/README.md
+developer-data/
+
 # Python (補助ツール)
 __pycache__/
 *.py[cod]
