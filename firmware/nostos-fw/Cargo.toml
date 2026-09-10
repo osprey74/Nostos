@@ -1,0 +1,24 @@
+# ⚠️ Phase 2 スケルトン。親ワークスペースからは exclude 済み。
+# espup 導入・実機着手までビルドしない。依存はすべて着手時に確定する（下記は方針メモ）。
+[package]
+name = "nostos-fw"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Nostos PaperMono 受信ファーム（Phase 2 スケルトン・未ビルド）"
+license = "MIT"
+
+[dependencies]
+# 言語非依存ロジック（本リポジトリの host crate をそのまま使う）
+nostos-nav = { path = "../../crates/nostos-nav" }
+nostos-meshtastic = { path = "../../crates/nostos-meshtastic" }
+
+# TODO(Phase 2): papermono-rs の BSP を git 依存で参照（MIT）。
+#   SX1262 ドライバ・LoRa 定数・M5PM1/M5IOE1。
+# m5stack-papermono = { git = "https://github.com/canardleteer/papermono-rs" }
+# m5stack-papermono-lite = { git = "https://github.com/canardleteer/papermono-rs" }
+
+# TODO(Phase 2): esp-hal / embassy 一式（papermono-rs embassy-debug と同 tag に合わせる）。
+# esp-hal = { git = "https://github.com/esp-rs/esp-hal", tag = "esp-hal-v1.2.0-rc.0", features = ["esp32s3", "unstable"] }
+# esp-rtos = { ... }  embassy-executor / embassy-time / embassy-sync ...
+# embedded-graphics = "0.8"   # e-ink 描画
