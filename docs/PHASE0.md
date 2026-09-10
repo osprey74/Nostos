@@ -47,13 +47,24 @@ set_lora_sync_word(0x24B4)               // SYNC_WORD_MESHTASTIC
 set_rx(0xFFFFFF)                         // continuous
 ```
 
-## ⚠️ 差分 1：周波数を US915 → JP へ
+## ⚠️ 差分 1：周波数を US915 → JP へ（実測確定済み）
 
 papermono-rs の検証は **US915**（`FREQ_RX_SNIFFER_PRI_HZ = 917.625MHz` 等）。
-**日本運用は 920MHz 帯（JP）**に変更が必須。C6L 送信側の Region=JP 既定チャネル周波数に合わせる。
+**日本運用は JP** に変更が必須。C6L（Region=JP / LONG_FAST / 既定チャネル）の中心周波数：
 
-- Meshtastic JP プリセットのチャネル中心周波数を C6L 実機設定から確定させること（cardputerzero-apps HANDOFF §3 App02）。
-- `set_rf_frequency()` へ渡す Hz を JP 値に置換。sync word・変調は LongFast なら共通。
+- **JP LongFast 中心周波数 = `923.375 MHz`（`923_375_000` Hz）** ← 2026-09-10 実受信で確定。
+- 導出（Meshtastic firmware 一次情報）: JP region `freqStart=920.5 / freqEnd=923.5 / spacing=0` →
+  `numChannels = floor((923.5-920.5)/0.25) = 12`。既定 primary は空名→preset 名 `"LongFast"`、
+  `hash("LongFast") % 12 = ch 11`（djb2）→ `freq = 920.5 + 0.125 + 11*0.25 = 923.375`。
+  （`"LongFast"`/`"Long Fast"` どちらでも ch 11 に収束し同値。）
+- `set_rf_frequency(923_375_000)`。sync word `0x24B4`・SF11/BW250/CR5 は LongFast 共通（C6L 設定と一致）。
+
+### 実受信ログ（Phase 0 ② 実機確認・2026-09-10）
+
+PaperMono(COM8) を 923.375MHz に camp、C6L(COM7) から `--sendtext` した LongFast を受信：
+**len=32B / RSSI=-29dBm / SNR=+6dB / preview=`ff ff ff ff`**。
+preview 先頭4B = dest `0xFFFFFFFF`（ブロードキャスト）＝ `nostos-meshtastic::MeshHeader` の想定と一致。
+→ 受信チェーン（HW→RF→フレーム構造）が実機で実証された。
 
 ## ⚠️ 差分 2：フルペイロード読み出し
 
