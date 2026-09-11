@@ -39,6 +39,22 @@ static const uint32_t MIN_INTERVAL_MS  = 30UL * 1000;    // 移動時の最短�
 static const uint32_t MAX_INTERVAL_MS  = 600UL * 1000;   // 停止時のハートビート間隔（10分）
 static const float    MOVE_THRESHOLD_M = 30.0f;          // 前回送信位置からこれ以上動いたら「移動」
 
+// ---- ダミー GPS（E2E 検証専用・屋内で GPS fix 不能なとき） ----
+//   RF（周波数/帯域/出力/sync）は一切変更しない＝技適に無関係。位置データ源のみ差し替える。
+//   有効時：送信 seq ごとに基準点から約 70m 北東へ進む合成トラックを fix=1 で送信。
+//   → 受信側で Trail が伸び、homing 距離・方位が動くのを目視できる。
+//   本番ビルド（env:c6l-beacon）は DUMMY_GPS=0 のまま。検証は env:c6l-beacon-dummy を使う。
+#ifndef DUMMY_GPS
+#define DUMMY_GPS 0
+#endif
+#if DUMMY_GPS
+static const double   DUMMY_BASE_LAT = 35.0000000;   // 出発点（最古点＝homing 基準）
+static const double   DUMMY_BASE_LON = 135.0000000;
+static const double   DUMMY_STEP_LAT = 0.00045;      // ≈ +50m/送信（北）
+static const double   DUMMY_STEP_LON = 0.00055;      // ≈ +50m/送信（東・35°N）
+static const uint32_t DUMMY_EPOCH    = 1789000000UL; // 固定基準 unix 秒（各送信 +60s）
+#endif
+
 // ---- ピン定義（variant.h より） ----
 #define PIN_LORA_SCK  20
 #define PIN_LORA_MISO 22
@@ -156,6 +172,16 @@ void loop() {
   int32_t lat_e7 = (int32_t)(lat * 1e7);
   int32_t lon_e7 = (int32_t)(lon * 1e7);
   uint32_t t = gps_unix_time();
+
+#if DUMMY_GPS
+  // 屋内 E2E 検証：実 GPS を無視し、seq に応じた合成トラックで上書き（fix=1 扱い）。
+  fix = true;
+  lat = DUMMY_BASE_LAT + DUMMY_STEP_LAT * seq;
+  lon = DUMMY_BASE_LON + DUMMY_STEP_LON * seq;
+  lat_e7 = (int32_t)(lat * 1e7);
+  lon_e7 = (int32_t)(lon * 1e7);
+  t = DUMMY_EPOCH + (uint32_t)seq * 60;
+#endif
 
   uint32_t now = millis();
   double moved = (have_last && fix) ? dist_m(last_tx_lat, last_tx_lon, lat, lon) : 0.0;

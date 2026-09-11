@@ -29,7 +29,7 @@ stock `embassy-debug` を **Nostos-native 受信機**にするパッチ（`phase
 
 > エンドツーエンド確認には送信側（`c6l-beacon`）が必要。ビーコンのボタン任意発信でテスト可。
 
-## 実機検証結果（2026-09-10・PaperMono COM8 / C6L COM7）
+## 実機検証結果（Meshtastic phase0-1・2026-09-10・PaperMono COM8 / C6L COM7）
 
 | portnum | 送信 | 受信・デコード結果 | 判定 |
 | --- | --- | --- | --- |
@@ -39,6 +39,65 @@ stock `embassy-debug` を **Nostos-native 受信機**にするパッチ（`phase
 - `from=f115bbe0` = C6L ノード番号（0xF115BBE0）と一致。
 - rssi -24〜-31 dBm / snr +6 dB（卓上・至近）。
 - これにより **HW→RF→フレーム→復号→protobuf→lat/lon** の全段が実機実証された。
+
+## 実機検証結果（Nostos-native Step D・2026-09-11・PaperMono COM8 / C6L COM7）
+
+**生 LoRa の C6L→PaperMono E2E を実機で確定。** 屋内で GPS fix 不能のため、C6L を
+`env:c6l-beacon-dummy`（`-DDUMMY_GPS=1`）でビルドし、送信 seq に応じて基準点 (35.0, 135.0) から
+約 70m/送信・北東へ進む合成トラックを fix=1 で送信（RF は本番と完全同一・技適に無関係）。
+
+| 観測点 | 結果 | 判定 |
+| --- | --- | --- |
+| C6L 送信（COM7） | `923.000MHz BW125 SF9 sync0x3A` / `TX(move) seq=1 lat_e7=350004500 lon_e7=1350005500 st=0` | ✅ 送信成功・LBT free |
+| PaperMono 受信カード（e-ink 目視） | `923.000MHz / -56dBm / 11dB / 16bytes / 01 01 37 4c` | ✅ **バイト一致** |
+
+先頭 4B `01 01 37 4c` を `version｜flags｜seq｜lat_e7…` で解読：
+`version=01`・`flags=01`(FIX_VALID)・`seq=0x37=55`・`lat_e7 の LSB=0x4C=76`。
+ダミー seq55 の `lat_e7 = 350000000 + 55×4500 = 350247500`、`350247500 mod 256 = 76 = 0x4C` と**完全一致**。
+→ **HW→RF→16B NostosFrame→version/flags/seq/lat_e7 デコード**が実機で一致実証された。
+
+- rssi -56 dBm / snr 11 dB（卓上・至近）。
+
+### シリアル数値（`rxtest` で hands-off 捕捉・2026-09-11）
+
+`rxtest` 受信FW を `espflash flash --monitor` で焼いて捕捉（タップ不要）。全フィールドがダミー生成値と一致：
+
+```text
+nostos-rx: seq=78 fix=1 lat_e7=350351000 lon_e7=1350429000 time=1789004680 rssi=-57 snr=11 len=16
+nostos-rx: trail=1 home_dist_m=0   home_bearing_deg=0
+nostos-rx: seq=79 fix=1 lat_e7=350355500 lon_e7=1350434500 time=1789004740 rssi=-56 snr=10 len=16
+nostos-rx: trail=2 home_dist_m=70  home_bearing_deg=225
+nostos-rx: seq=80 fix=1 lat_e7=350360000 lon_e7=1350440000 time=1789004800 rssi=-57 snr=11 len=16
+nostos-rx: trail=3 home_dist_m=141 home_bearing_deg=225
+```
+
+- lat/lon/time が `35e7+seq×4500 / 135e7+seq×5500 / 1789000000+seq×60` と**完全一致**。
+- **homing 距離** 70m→141m（1歩≈70m の等差）＝ `nostos-nav` haversine 正。
+- **homing 方位 225°(SW)** ＝ 北東へ進む合成トラックに対し出発点（trail=1）が南西＝ bearing 正。
+- → **RF受信→16Bデコード→Trail→haversine→bearing** の全段を実機で数値実証。
+
+> ⚠️ シリアル観測の注意: 素の `System.IO.Ports` で COM8 を開くと ESP32-S3 の USB-Serial-JTAG が
+> DTR/RTS で download モードへ落ち CDC 無音・アプリ停止になる。観測は **`espflash flash --monitor`**
+> か、お手元の `pio device monitor -p COM8 -b 115200`（DTR/RTS off）で。`espflash monitor` 単体
+> （既定 `--before default-reset`）も download 落ち、`--before no-reset` は稼働アプリに同期できず不可。
+> 復帰は `espflash reset --port COM8`。
+
+### タップ不要の連続受信モード（`rxtest` feature・2026-09-11 追加）
+
+UI の LoRa カードで RX タッチする代わりに、起動直後から `listen_rx` をループして
+`nostos-rx:` を吐き続ける受信専用ビルド。papermono-rs 側に追加：
+
+- `firmware/embassy-debug/Cargo.toml`: `rxtest = ["c153", "touch"]`。
+- `firmware/embassy-debug/src/main.rs`: `probe_and_park` 直後に `#[cfg(feature="rxtest")]` の
+  発散ループ（`listen_rx(&mut i2c, &btn_a, &btn_b, &tp)`）。panel/ui/heartbeat は迂回される。
+
+```powershell
+# papermono-rs 上で export-esp 相当を通してから
+cargo +esp build -p embassy-debug-fw --profile release-fw `
+  --target xtensa-esp32s3-none-elf '-Zbuild-std=core,alloc' `
+  --no-default-features --features 'c153,touch,rxtest'
+espflash flash --port COM8 --monitor target\xtensa-esp32s3-none-elf\release-fw\embassy-debug-fw
+```
 
 ## ビルド/フラッシュ（Windows・xtask 非対応のため直接）
 
