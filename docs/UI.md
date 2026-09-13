@@ -26,7 +26,7 @@ C6L・PaperMono とも**地磁気センサ非搭載**（PaperMono の IMU は BM
 
 ## アプリA：C6L 送信機（0.66" OLED ＋ ブザー ＋ ボタン）
 
-- **画面**: 0.66" OLED（I2C SDA=10 / SCL=8、SSD1306 系と推測・**実装前に variant.h と M5 公式で解像度/コントローラ確認**）。
+- **画面**: 0.66" OLED **64×48 ピクセル**（I2C SDA=10 / SCL=8。コントローラは SSD1306 系と推測・実装時に variant.h で最終確認）。
 - **操作ボタン＝本体正面ボタン（GPIO9・BOOT ストラップ・active-low）**。ブザー＝GPIO11。
   - 側面のリセットボタンは MCU の RESET（EN/CHIP_PU）直結＝**GPIO として読めない**（再起動専用）。
      page 送り・HOME 確定・任意発信の各操作はすべて**正面ボタン**に載せる。
@@ -134,8 +134,15 @@ C6L・PaperMono とも**地磁気センサ非搭載**（PaperMono の IMU は BM
 - 衛星数・高度・進路は **C6L の OLED が自機 GPS を直読**して表示（フレーム非依存）。
 - PaperMono の距離・方位は受信座標 ＋ 保存済み出発点から算出（`crates/nostos-nav`: haversine / bearing）。
 
-## 未確定・実装前に確認
+## 確定事項（2026-09-13）
 
-- C6L OLED の実解像度・コントローラ・I2C アドレス（variant.h / M5 公式）。
-- 出発点（HOME）の保持方法: C6L 側で保存し、PaperMono へは「HOME フラグ付きフレーム」で共有するか、
-  PaperMono 側で最初の受信点を HOME とみなすか（両立可）。
+- **C6L OLED は 64×48 ピクセル**（0.66"）。3 ページ構成は 64×48 前提でレイアウトする
+  （コントローラ・I2C アドレスは実装時に variant.h で最終確認）。
+- **出発点（HOME）は C6L 側が起点**。ボタン**長押し（2s）で明示的に HOME 確定**し、
+  確定座標を `FLAG_HOME`（`flags` bit1 = 0x02）付きフレームで PaperMono へ共有する。
+  - HOME 確定時に HOME フレームを即時送信（LBT を通す）。以降も **10 送信ごとに
+    保存済み HOME 座標を HOME フレームとして再放送**（後から起動した PaperMono 対策）。
+  - PaperMono は HOME フレーム受信で出発点を設定/更新する。**HOME フレームは Trail に
+    積まない**（軌跡は通常フレームのみ）。HOME 未受信の間、帰路タブは「HOME 未受信」表示。
+  - HOME 再確定（長押し再操作）で seq をリセットし、PaperMono 側も Trail をリセットする
+    （新しい行程の開始とみなす）。

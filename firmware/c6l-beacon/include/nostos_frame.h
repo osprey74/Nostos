@@ -8,6 +8,9 @@
 #define NOSTOS_FRAME_LEN 16
 #define NOSTOS_PROTOCOL_VERSION 1
 #define NOSTOS_FLAG_FIX_VALID 0x01
+// このフレームの座標は出発点（HOME）。ボタン長押しで確定した座標の共有用。
+// 確定時に即時送信＋以降 10 送信ごとに再放送。受信側は Trail に積まない。
+#define NOSTOS_FLAG_HOME 0x02
 
 // CRC-8（多項式 0x07・初期値 0x00）。Rust 版 nostos_frame::crc8 と一致。
 static inline uint8_t nostos_crc8(const uint8_t *data, uint32_t len) {
@@ -21,15 +24,23 @@ static inline uint8_t nostos_crc8(const uint8_t *data, uint32_t len) {
   return crc;
 }
 
-// フレームを 16 バイトへエンコードする。out は 16 バイト以上。
-static inline void nostos_frame_encode(uint8_t *out, uint8_t seq, int32_t lat_e7,
-                                       int32_t lon_e7, uint32_t time_unix,
-                                       int fix_valid) {
+// フレームを 16 バイトへエンコードする。out は 16 バイト以上。flags は
+// NOSTOS_FLAG_* の OR（従来 API の互換は下の nostos_frame_encode を使用）。
+static inline void nostos_frame_encode_flags(uint8_t *out, uint8_t flags,
+                                             uint8_t seq, int32_t lat_e7,
+                                             int32_t lon_e7, uint32_t time_unix) {
   out[0] = NOSTOS_PROTOCOL_VERSION;
-  out[1] = fix_valid ? NOSTOS_FLAG_FIX_VALID : 0;
+  out[1] = flags;
   out[2] = seq;
   memcpy(&out[3], &lat_e7, 4);    // ESP32-C6 はリトルエンディアン
   memcpy(&out[7], &lon_e7, 4);
   memcpy(&out[11], &time_unix, 4);
   out[15] = nostos_crc8(out, 15);
+}
+
+static inline void nostos_frame_encode(uint8_t *out, uint8_t seq, int32_t lat_e7,
+                                       int32_t lon_e7, uint32_t time_unix,
+                                       int fix_valid) {
+  nostos_frame_encode_flags(out, fix_valid ? NOSTOS_FLAG_FIX_VALID : 0, seq,
+                            lat_e7, lon_e7, time_unix);
 }

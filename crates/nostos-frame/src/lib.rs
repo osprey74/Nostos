@@ -24,6 +24,13 @@ pub const PROTOCOL_VERSION: u8 = 1;
 /// フラグ: 有効な GPS 測位（fix）を含む。
 pub const FLAG_FIX_VALID: u8 = 0x01;
 
+/// フラグ: このフレームの座標は出発点（HOME）。
+///
+/// C6L 側でボタン長押しにより明示確定した出発点座標を共有する。受信側（PaperMono）は
+/// HOME フレームで出発点を設定/更新し、**Trail には積まない**。C6L は確定時に即時送信し、
+/// 以降 10 送信ごとに保存済み HOME 座標を再放送する（後から起動した受信機対策）。
+pub const FLAG_HOME: u8 = 0x02;
+
 /// 送信に関わる RF パラメータ（**技適順守のためハードコード固定**）。
 ///
 /// 認証枠: F1D / 922〜923.4 MHz / 200 kHz / 1.5〜5.0 mW（Unit-C6L 211-250603）。
@@ -103,10 +110,29 @@ impl NostosFrame {
         }
     }
 
+    /// HOME（出発点）フレームを生成。座標は保存済み出発点、fix は常に有効。
+    #[must_use]
+    pub fn new_home(seq: u8, lat_e7: i32, lon_e7: i32, time_unix: u32) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            flags: FLAG_FIX_VALID | FLAG_HOME,
+            seq,
+            lat_e7,
+            lon_e7,
+            time_unix,
+        }
+    }
+
     /// 有効な測位を含むか。
     #[must_use]
     pub fn has_fix(&self) -> bool {
         self.flags & FLAG_FIX_VALID != 0
+    }
+
+    /// 出発点（HOME）フレームか。
+    #[must_use]
+    pub fn is_home(&self) -> bool {
+        self.flags & FLAG_HOME != 0
     }
 
     /// 緯度経度を [`GeoPoint`] に変換。
@@ -191,6 +217,17 @@ mod tests {
         assert_eq!(f, g);
         assert!(g.has_fix());
         assert_eq!(g.seq, 42);
+    }
+
+    #[test]
+    fn home_flag_roundtrip() {
+        let f = NostosFrame::new_home(0, 350_000_000, 1_350_000_000, 1_789_000_000);
+        let g = NostosFrame::decode(&f.encode()).unwrap();
+        assert!(g.is_home());
+        assert!(g.has_fix());
+        // 通常フレームは HOME ではない
+        let n = NostosFrame::new(1, 0, 0, 0, true);
+        assert!(!n.is_home());
     }
 
     #[test]
