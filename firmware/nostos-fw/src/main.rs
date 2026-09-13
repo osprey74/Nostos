@@ -102,6 +102,12 @@ async fn main(_spawner: Spawner) -> ! {
 
     println!("nostos-fw: boot");
 
+    // 起動ビープ（GPIO42 ブザー）。バッテリ単体ブートの生存確認用：
+    // ピッ 1 回＝ESP 起動、bring_up 後のピピッ＝PM1 電源維持まで到達。
+    let mut buzzer = Output::new(peripherals.GPIO42, Level::Low, OutputConfig::default());
+    let bz_delay = esp_hal::delay::Delay::new();
+    beep_blocking(&mut buzzer, &bz_delay, 120);
+
     // 物理ボタン（active-low・内部プルアップ）。
     let btn_a = Input::new(
         peripherals.GPIO2,
@@ -128,6 +134,10 @@ async fn main(_spawner: Spawner) -> ! {
         .with_sda(peripherals.GPIO47)
         .with_scl(peripherals.GPIO48);
     let ioe_ok = ioe::bring_up(&mut i2c).await.is_some();
+    // PM1 電源維持（LDO_EN/HOLD/WDT 無効）まで到達した合図（ピピッ）。
+    beep_blocking(&mut buzzer, &bz_delay, 60);
+    bz_delay.delay_millis(70);
+    beep_blocking(&mut buzzer, &bz_delay, 60);
 
     // SSD1677 パネル（SPI2: MOSI=14 / SCLK=15 / CS=16 / DC=17）。
     let mut panel = panel::begin(
@@ -224,7 +234,16 @@ async fn main(_spawner: Spawner) -> ! {
         dbg_tick += 1;
         if dbg_tick % 1200 == 0 {
             let (irq, rssi, raw) = radio.debug_status();
-            println!("nostos-fw: dbg irq=0x{:04x} rssi={} status=0x{:02x}", irq, rssi, raw);
+            let touch = ioe::read_touch(&mut i2c);
+            println!(
+                "nostos-fw: dbg irq=0x{:04x} rssi={} status=0x{:02x} busy={} tp_int={} tp_read={}",
+                irq,
+                rssi,
+                raw,
+                busy.is_high() as u8,
+                tp.is_high() as u8,
+                touch.is_some() as u8
+            );
         }
         // 電源状態は 5 秒ごとに更新（LED 判定と設定画面表示に使用）。
         if dbg_tick % 100 == 0 {
@@ -384,7 +403,12 @@ async fn main(_spawner: Spawner) -> ! {
                             }
                         }
                     } else if held_long {
-                        if view_center.is_some() {
+                        if screen == Screen::Settings {
+                            // 設定画面の長押し＝電源オフ（バッテリ駆動時。USB 給電中は再起動相当）。
+                            println!("nostos-fw: POWER OFF (pm1 shutdown)");
+                            Timer::after(Duration::from_millis(50)).await;
+                            ioe::shutdown(&mut i2c);
+                        } else if view_center.is_some() {
                             view_center = None;
                             println!("nostos-fw: recenter");
                             redraw = true;
@@ -482,6 +506,16 @@ async fn main(_spawner: Spawner) -> ! {
             .await;
             last_render_at = Instant::now();
         }
+    }
+}
+
+/// ブザー（GPIO42）を 2kHz で `ms` ミリ秒鳴らす（ブロッキング・起動診断用）。
+fn beep_blocking(bz: &mut Output<'static>, d: &esp_hal::delay::Delay, ms: u32) {
+    for _ in 0..(ms * 2) {
+        bz.set_high();
+        d.delay_micros(250);
+        bz.set_low();
+        d.delay_micros(250);
     }
 }
 

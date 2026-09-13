@@ -1112,6 +1112,7 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
         }
         let mut ink = Ink::black(bw, red);
         let _ = Text::new(l.as_str(), Point::new(16, 560), mid).draw(&mut ink);
+        let _ = Text::new("hold screen 1s = POWER OFF", Point::new(16, 600), mid).draw(&mut ink);
         let _ = Text::new(
             concat!("nostos-fw v", env!("CARGO_PKG_VERSION")),
             Point::new(16, MAP_Y1 + 24),

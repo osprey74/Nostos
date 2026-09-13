@@ -199,6 +199,70 @@ pub fn set_led_red(i2c: &mut SysI2c, on: bool) {
     let _ = pm1.set_led(on);
 }
 
+/// M5PM1 の「I2C アイドルスリープ」レジスタ（M5Unified `M5PM1_REG_I2C_CFG`）。
+const PM1_REG_I2C_CFG: u8 = 0x09;
+/// M5PM1 のウォッチドッグカウンタ（M5Unified `M5PM1_REG_WDT_CNT`）。
+const PM1_REG_WDT_CNT: u8 = 0x0A;
+/// `PWR_CFG` bit1: 5V DCDC 有効（公式 M5PM1 lib `M5PM1_PWR_CFG_DCDC_EN`）。
+/// バッテリ駆動時の表示系（EPD/フロントライト）の電源。VIN ありでは外部 5V が
+/// 代替するため、未設定でも USB 接続時は症状が出ない。
+const PM1_PWR_CFG_DCDC_EN: u8 = 1 << 1;
+/// `PWR_CFG` bit2: 3.3V LDO 有効（公式 M5PM1 lib `M5PM1_PWR_CFG_LDO_EN`）。
+const PM1_PWR_CFG_LDO_EN: u8 = 1 << 2;
+
+/// M5PM1 を「生かし続ける」設定（公式 UserDemo の wake 処理＋M5Unified `begin()` 相当）。
+///
+/// **バッテリ駆動時の必須処理**（USB=VIN ありでは落ちないため気づきにくい）:
+/// 1. `PWR_CFG` の **LDO_EN(bit2)** — バッテリ→3.3V LDO の給電経路そのもの。
+///    これが無いと VIN を抜いた瞬間・ボタン起動の一時給電が切れた時点で電源断
+///    （UserDemo は `setLdoEnable(true)`）。
+/// 2. `HOLD_CFG` の **LDO hold(bit5)** — LDO の維持（`ldoSetPowerHold(true)`）。
+/// 3. `WDT_CNT=0`／`I2C_CFG=0` — PM1 ウォッチドッグと I2C アイドルスリープの無効化
+///    （M5Unified `M5PM1_Class::begin()`）。
+/// 起動直後に最優先で呼ぶこと。
+pub fn hold_power(i2c: &mut SysI2c) -> bool {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    let a = pm1.write_at(PM1_REG_I2C_CFG, 0x00).is_ok(); // I2C アイドルスリープ無効
+    let b = pm1.write_at(PM1_REG_WDT_CNT, 0x00).is_ok(); // ウォッチドッグ無効
+    // read-modify-write。読み出しに失敗したら書かない（unwrap_or(0) で他ビットを
+    // 消すと DCDC/充電等が落ち、PM1 は再起動されないため壊れた設定が残留する）。
+    let mut c = false;
+    let mut d = false;
+    let mut pwr_v = 0xFFu8;
+    let mut hold_v = 0xFFu8;
+    if let Ok(pwr) = pm1.read_at(pmic::PWR_CFG) {
+        // バッテリ→3.3V LDO（システム）＋5V DCDC の経路を有効化。
+        // ⚠️ BOOST(bit3) はここで触らない: VIN あり時に ON で 5V レール競合、
+        //    かつ操作実験でパネル固着を誘発した（2026-09-13）。バッテリ単体運用の
+        //    表示は未解決課題（現状はモバイルバッテリ等の USB 給電起動で運用）。
+        pwr_v = pwr | PM1_PWR_CFG_LDO_EN | PM1_PWR_CFG_DCDC_EN;
+        c = pm1.write_at(pmic::PWR_CFG, pwr_v).is_ok();
+    }
+    if let Ok(hold) = pm1.read_at(pmic::HOLD_CFG) {
+        hold_v = hold | pmic::HOLD_LDO;
+        d = pm1.write_at(pmic::HOLD_CFG, hold_v).is_ok();
+    }
+    // 0x08 = BATT_LVP（低電圧保護しきい値 mV=2000+n*7.81）。過去の誤書き込み検出用に読む。
+    let lvp = pm1.read_at(0x08).unwrap_or(0xFF);
+    esp_println::println!(
+        "nostos-fw: pm1 pwr_cfg=0x{:02x} hold_cfg=0x{:02x} batt_lvp=0x{:02x} (i2c_cfg={} wdt={} pwr={} hold={})",
+        pwr_v,
+        hold_v,
+        lvp,
+        a as u8,
+        b as u8,
+        c as u8,
+        d as u8
+    );
+    a && b && c && d
+}
+
+/// M5PM1 にシャットダウンを指示する（バッテリ駆動時は電源断。USB 給電中は再起動相当）。
+pub fn shutdown(i2c: &mut SysI2c) {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    let _ = pm1.shutdown();
+}
+
 /// 電源レールと M5IOE1 を立ち上げる。受信ファームに必要な最小シーケンス：
 ///
 /// 1. レール整定待ち → M5PM1 存在確認 → M5IOE1 発見。
@@ -208,7 +272,13 @@ pub fn set_led_red(i2c: &mut SysI2c, on: bool) {
 ///
 /// 戻り値は発見した M5IOE1 アドレス（見つからなければ `None`＝表示・LoRa 電源制御不可）。
 pub async fn bring_up(i2c: &mut SysI2c) -> Option<u8> {
+    // ⚠️ PM1 への書き込みは必ずバス整定後に行う。整定前のトランザクションが化けると
+    // 意図しないレジスタ（低電圧保護しきい値等）を破壊し得る（PM1 はバッテリ給電で
+    // 常時生存のため、壊れた設定はリセットでも消えず表示系全滅などの残留障害になる）。
     Timer::after(Duration::from_millis(POWER_SETTLE_MS)).await;
+
+    let held = hold_power(i2c);
+    esp_println::println!("nostos-fw: pm1 power hold {}", if held { "ok" } else { "FAILED" });
 
     let pm1 = probe_read(i2c, addresses::M5PM1, pmic::DEVICE_ID);
     let ioe_addr = begin_ioe(i2c).await;
