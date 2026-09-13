@@ -145,6 +145,15 @@ impl Radio {
         let _ = sx.set_rx(0xFF_FF_FF);
     }
 
+    /// 診断: IRQ ステータス・瞬時 RSSI・生ステータスを読む（シリアルダンプ用）。
+    pub fn debug_status(&mut self) -> (u16, i16, u8) {
+        let mut sx = Sx1262::new(&mut self.spi, &mut self.nss, &mut self.busy);
+        let irq = sx.get_irq_status().unwrap_or(0xFFFF);
+        let rssi = sx.get_rssi_inst().unwrap_or(-127);
+        let raw = sx.get_status().map(|s| s.raw).unwrap_or(0xFF);
+        (irq, rssi, raw)
+    }
+
     /// 受信済みパケットの有無をポーリングし、あれば読み出して再アームする。
     ///
     /// CRC エラーは黙って破棄・再アーム。メインループから 50 ms 周期程度で呼ぶ。

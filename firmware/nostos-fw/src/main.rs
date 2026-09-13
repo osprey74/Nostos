@@ -14,7 +14,8 @@
 //! - HOME 座標が変わったら新しい行程として Trail をリセット
 //! - HOME 未受信の間は「HOME not received」表示（軌跡プロットは通常どおり）
 //!
-//! 操作: ボタン A（GPIO2）＝ズームイン / ボタン B（GPIO3）＝ズームアウト。
+//! 操作: ボタン A（GPIO2）＝ズームイン / ボタン B（GPIO3）＝ズームアウト /
+//! 画面タップ（TOUCH_INT GPIO4）＝軌跡 ⇄ 帰路の画面切替（タブ実装までの暫定）。
 
 #![no_std]
 #![no_main]
@@ -47,6 +48,15 @@ const TRAIL_CAP: usize = 256;
 /// 受信途絶とみなす秒数（この経過で画面を再描画し AGE を更新）。
 const STALE_REDRAW_SECS: u64 = 180;
 
+/// 表示中の画面。タップで循環切替。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    /// 第1画面：軌跡マップ（モノクロ・部分更新）。
+    Trail,
+    /// 第2画面：帰路ナビ（4 階調・常にフル更新）。
+    Homing,
+}
+
 // e-ink 用 1bpp プレーン（480×800 / 8 = 48,000 バイト ×2）。静的確保。
 static BW_PLANE: ConstStaticCell<[u8; display::PLANE_BYTES]> =
     ConstStaticCell::new([0; display::PLANE_BYTES]);
@@ -74,6 +84,11 @@ async fn main(_spawner: Spawner) -> ! {
     // SSD1677 BUSY（データシート準拠プルアップ）。
     let busy = Input::new(
         peripherals.GPIO18,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    // FT6336G タッチ割り込み（active-low・タップで画面切替）。
+    let tp = Input::new(
+        peripherals.GPIO4,
         InputConfig::default().with_pull(Pull::Up),
     );
 
@@ -131,8 +146,11 @@ async fn main(_spawner: Spawner) -> ! {
     let mut last_rx_at: Option<Instant> = None;
     let mut last_render_at = Instant::now();
     let mut scale_idx: usize = 1; // 2 m/px（グリッド 1 マス = 160 m）
+    let mut screen = Screen::Trail;
     let mut prev_a = false;
     let mut prev_b = false;
+    let mut prev_tp = false;
+    let mut last_toggle_at = Instant::now();
 
     // 初期画面（受信待ち）。
     render_and_paint(
@@ -143,6 +161,7 @@ async fn main(_spawner: Spawner) -> ! {
         last_rx_at,
         home,
         scale_idx,
+        screen,
         radio_ok,
         &mut panel,
         &mut i2c,
@@ -150,9 +169,17 @@ async fn main(_spawner: Spawner) -> ! {
     )
     .await;
 
+    let mut dbg_tick: u32 = 0;
     loop {
         Timer::after(Duration::from_millis(50)).await;
         let mut redraw = false;
+
+        // 診断: 60 秒ごとに SX1262 の生状態をダンプ（受信不能時の切り分け用）。
+        dbg_tick += 1;
+        if dbg_tick % 1200 == 0 {
+            let (irq, rssi, raw) = radio.debug_status();
+            println!("nostos-fw: dbg irq=0x{:04x} rssi={} status=0x{:02x}", irq, rssi, raw);
+        }
 
         // --- 受信ポーリング ---
         if let Some(pkt) = radio.poll() {
@@ -233,6 +260,23 @@ async fn main(_spawner: Spawner) -> ! {
         prev_a = a;
         prev_b = b;
 
+        // --- タップ（TOUCH_INT 立ち下がり）で画面切替。e-ink 更新中の多重反応を
+        // 避けるため 1.5 秒のクールダウンを置く ---
+        let t = tp.is_low();
+        if t && !prev_tp && last_toggle_at.elapsed() >= Duration::from_millis(1500) {
+            screen = match screen {
+                Screen::Trail => Screen::Homing,
+                Screen::Homing => Screen::Trail,
+            };
+            last_toggle_at = Instant::now();
+            println!(
+                "nostos-fw: screen -> {}",
+                if screen == Screen::Trail { "trail" } else { "homing" }
+            );
+            redraw = true;
+        }
+        prev_tp = t;
+
         // --- 受信が途絶えても AGE 表示を進める（再描画は控えめに）---
         if !redraw
             && last_rx_at.is_some()
@@ -250,6 +294,7 @@ async fn main(_spawner: Spawner) -> ! {
                 last_rx_at,
                 home,
                 scale_idx,
+                screen,
                 radio_ok,
                 &mut panel,
                 &mut i2c,
@@ -271,22 +316,36 @@ async fn render_and_paint(
     last_rx_at: Option<Instant>,
     home: Option<GeoPoint>,
     scale_idx: usize,
+    screen: Screen,
     radio_ok: bool,
     panel: &mut Option<panel::Panel>,
     i2c: &mut ioe::SysI2c,
     busy: &Input<'static>,
 ) {
+    // 出発点: HOME フレーム受信済みならその座標、未受信なら最初の受信点を暫定採用。
+    let anchor = home.or_else(|| trail.oldest());
     let st = draw::Status {
         last,
         age_secs: last_rx_at.map(|t| t.elapsed().as_secs()),
         m_per_px: draw::SCALE_M_PER_PX[scale_idx],
         home,
-        homing: home.and_then(|h| trail.homing(h)),
+        homing: anchor.and_then(|h| trail.homing(h)),
+        home_provisional: home.is_none(),
         radio_ok,
         vbat_mv: ioe::read_vbat_mv(i2c),
     };
-    draw::render_trail(bw, red, trail, &st);
-    if let Some(p) = panel.as_mut() {
-        p.paint_mono_fast(i2c, bw, red, busy).await;
+    match screen {
+        Screen::Trail => {
+            draw::render_trail(bw, red, trail, &st);
+            if let Some(p) = panel.as_mut() {
+                p.paint_mono_fast(i2c, bw, red, busy).await;
+            }
+        }
+        Screen::Homing => {
+            draw::render_homing(bw, red, trail, &st);
+            if let Some(p) = panel.as_mut() {
+                p.paint_gray(i2c, bw, red, busy).await;
+            }
+        }
     }
 }

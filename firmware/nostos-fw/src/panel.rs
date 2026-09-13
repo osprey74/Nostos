@@ -1,8 +1,8 @@
-//! SSD1677 e-paper 制御（OTP 波形・モノクロ専用の最小移植）。
+//! SSD1677 e-paper 制御（OTP 波形・モノクロ＋4 階調）。
 //!
-//! papermono-rs `firmware/embassy-debug` の `panel.rs`（MIT）からモノクロ描画経路のみを
-//! 移植（4 階調・テレメトリ・ターゲットマークは除外。薄墨表現が要る帰路画面で
-//! `paint_gray` を追加予定）。
+//! papermono-rs `firmware/embassy-debug` の `panel.rs`（MIT）から移植
+//! （テレメトリ・ターゲットマークは除外）。モノクロ（軌跡画面・部分更新可）と
+//! 4 階調 GrayFull（帰路画面・薄墨表現）の両経路を持つ。
 //!
 //! # 安全契約（原本と同一・厳守）
 //! 1. **工場 OTP 波形のみ使用**（カスタム LUT 0x32 は焼き付きの恐れがあるため禁止）。
@@ -106,6 +106,42 @@ impl Panel {
         self.refresh_partial(i2c, bw, red, busy).await;
     }
 
+    /// 4 階調フレームを描画する（工場 OTP 4-gray 波形・常にフル更新）。
+    ///
+    /// プレーンのビットは `ssd1677-otp::gray_planes` のエンコード
+    /// （WHITE=(0,0) / LIGHT=(bw) / DARK=(red) / BLACK=(1,1)）。
+    /// GrayFull はモノクロベースラインを無効化するため、次のモノクロ描画は
+    /// 自動的にフル更新になる。
+    pub async fn paint_gray(
+        &mut self,
+        i2c: &mut SysI2c,
+        bw: &[u8],
+        red: &[u8],
+        busy: &Input<'static>,
+    ) {
+        self.hardware_reset(i2c, busy).await;
+        self.init_gray(busy).await;
+        write_gray_plane(&mut self.epd, display::WRITE_RAM_BW, bw).await;
+        write_gray_plane(&mut self.epd, display::WRITE_RAM_RED, red).await;
+        let _ = self.epd.cmd(
+            display::DISPLAY_UPDATE_CONTROL_2,
+            &[display::UPDATE_SEQ_OTP_4GRAY],
+        );
+        let _ = self.epd.activate();
+        let _ = wait_busy_cycle(busy).await;
+        self.deep_sleep().await;
+        self.mono_ready = false;
+        self.partials = 0;
+    }
+
+    async fn init_gray(&mut self, busy: &Input<'_>) {
+        wait_ready(busy).await;
+        let _ = self.epd.cmd(display::SW_RESET, &[]);
+        Timer::after(Duration::from_millis(RST_MS)).await;
+        wait_busy_low(busy).await;
+        let _ = self.epd.init_gray();
+    }
+
     async fn init_mono(&mut self, busy: &Input<'_>) {
         wait_ready(busy).await;
         let _ = self.epd.cmd(display::SW_RESET, &[]);
@@ -185,6 +221,32 @@ impl Panel {
         self.deep_sleep().await;
         self.partials = self.partials.saturating_add(1);
     }
+}
+
+async fn write_gray_plane(epd: &mut Epd, ram_cmd: u8, official: &[u8]) {
+    let _ = epd.rewind_gray();
+    let _ = epd.begin_ram(ram_cmd);
+    let mut row = [0u8; display::OTP_BYTES_PER_ROW];
+    for ram_y in 0..display::OTP_RAM_HEIGHT {
+        for (byte_i, slot) in row.iter_mut().enumerate() {
+            let mut v = 0u8;
+            for bit in 0..8u16 {
+                let ram_x = display::OTP_RAM_WIDTH
+                    .saturating_sub(1)
+                    .saturating_sub((byte_i as u16) * 8 + bit);
+                let (px, py) = display::otp_ram_to_usb_down(ram_x, ram_y);
+                if official_bit(official, px, py) {
+                    v |= 0x80 >> bit;
+                }
+            }
+            *slot = v;
+        }
+        let _ = epd.write_bytes(&row);
+        if ram_y.is_multiple_of(YIELD_EVERY_ROWS) {
+            Timer::after(Duration::from_millis(1)).await;
+        }
+    }
+    let _ = epd.end_ram();
 }
 
 async fn write_official_mono(epd: &mut Epd, ram_cmd: u8, bw: &[u8], red: &[u8], invert: bool) {

@@ -42,11 +42,14 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
 
 ## 現状
 
-- **Phase 2 進行中**（2026-09-13）: `firmware/nostos-fw` を実機動作まで実装。
+- **Phase 2 進行中**（2026-09-13）: `firmware/nostos-fw` の 2 画面を実機動作まで実装。
   受信（923.000MHz/BW125/SF9/sync 0x3A 連続 camp）→ NostosFrame デコード → HOME/Trail 管理 →
-  e-ink 軌跡マップ（North-up グリッド・破線・連番・ズーム A/B）まで動作。
+  ①軌跡マップ（モノクロ・部分更新）＋②帰路ナビ（4 階調・薄墨の来た道＋濃破線の帰路方位）。
+  タップで画面切替（暫定）・A/B ズーム・時刻/電池ヘッダ。
 - HOME は `FLAG_HOME`（flags bit1）で C6L から共有する仕様に確定（[docs/UI.md](docs/UI.md)）。
-- 未実装: 帰路ナビ画面（4 階調）・タッチタブ・設定タブ・RGB LED、C6L 側 OLED UI／HOME 長押し確定。
+  未受信の間は最初の受信点を暫定出発点（HOME* 表記）として帰路表示。
+- 未実装: タッチタブ（座標デコード）・設定タブ・RGB LED・日本語フォント、
+  C6L 側 OLED UI／HOME 長押し確定。
 
 ## 開発環境
 

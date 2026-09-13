@@ -156,6 +156,16 @@ pub async fn bring_up(i2c: &mut SysI2c) -> Option<u8> {
         let _ = set_push_pull_output(i2c, ioe1::IP2315_I2C_GATE, false);
         let _ = set_push_pull_output(i2c, ioe1::PDM_VDD_ENABLE, false);
         let _ = set_push_pull_output(i2c, ioe1::EPD_VDD_ENABLE, true);
+
+        // FT6336G タッチを電源サイクルして起動（touch_bus と同シーケンス）。
+        // 現状は座標を読まず TOUCH_INT(GPIO4) のタップ検出（画面切替）のみに使う。
+        let _ = set_push_pull_output(i2c, ioe1::TOUCH_RST, false);
+        let _ = set_push_pull_output(i2c, ioe1::TOUCH_VDD_ENABLE, false);
+        Timer::after(Duration::from_millis(30)).await;
+        let _ = set_push_pull_output(i2c, ioe1::TOUCH_VDD_ENABLE, true);
+        Timer::after(Duration::from_millis(20)).await;
+        let _ = set_push_pull_output(i2c, ioe1::TOUCH_RST, true);
+        Timer::after(Duration::from_millis(100)).await;
     }
 
     esp_println::println!(
