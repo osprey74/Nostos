@@ -1,35 +1,61 @@
-# firmware/nostos-fw（Phase 2 着手時に有効化するスケルトン）
+# firmware/nostos-fw — PaperMono 受信ファーム（Phase 2 本実装）
 
-> ⚠️ **現状はスケルトン**。Xtensa ツールチェーン（espup）導入と実機着手（Phase 2）まではビルドしない。
-> ワークスペースからは `exclude` 済み（ホストの `cargo test` を汚さないため）。
-
-## 位置づけ
-
-PaperMono（ESP32-S3 / SX1262 / SSD1677）上で動く受信ファーム本体。
-言語非依存ロジック（`nostos-nav` / `nostos-meshtastic`）を**そのまま呼ぶ**のが設計目標:
+PaperMono（ESP32-S3 / SX1262 / SSD1677）で動く **Nostos 受信機本体**。
+C6L ビーコンの 16 バイト NostosFrame（923.000 MHz / BW125 / SF9 / sync 0x3A）を
+連続受信し、North-up グリッドにブレッドクラム軌跡を e-ink 描画する。**受信専用（送信なし＝技適対象外）**。
 
 ```text
-SX1262 RX (LongFast, JP 920MHz)
-  └─ フルペイロード読み出し
-       └─ nostos_meshtastic::decode_position(frame, &DEFAULT_CHANNEL_KEY)
-            └─ nostos_nav::Trail::push(GeoPoint::from_meshtastic_i(..))
-                 └─ e-ink 描画（グリッド＋ブレッドクラム）＋ Trail::homing() で帰路方位
+SX1262 RX 連続 camp（lora.rs）
+  └─ nostos_frame::NostosFrame::decode
+       ├─ FLAG_HOME → 出発点を設定/更新（座標が変われば Trail リセット）
+       └─ FIX_VALID → nostos_nav::Trail::push
+            └─ draw.rs（軌跡マップ）→ panel.rs（SSD1677 OTP モノクロ・部分更新バジェット）
 ```
 
-## 有効化手順（Phase 2）
+## 構成
 
-1. `docs/TOOLCHAIN.md` に従い espup / espflash を導入。
-2. 本ディレクトリを親の `Cargo.toml` の `exclude` から外し、独立ビルド or Nostos xtask を用意。
-3. papermono-rs の BSP crate を **git 依存**で参照（`Cargo.toml` の TODO 参照）。
-4. papermono-rs `firmware/embassy-debug` から以下を移植:
-   - `ioe.rs`（M5IOE1 経由 GPIO 制御）
-   - `board.rs`（システム I2C 立ち上げ）
-   - `lora.rs` の `power_up` / `power_down` シーケンス
-   - `listen_rx` を **フルペイロード読み出し**に改造（差分は `docs/PHASE0.md`）
-5. 周波数を **JP 920MHz 帯**に設定（C6L 実機設定と一致させる）。
+| ファイル | 役割 | 出自 |
+| --- | --- | --- |
+| `src/main.rs` | bring-up・受信ループ・状態管理 | 新規（embassy-debug の起動順を踏襲） |
+| `src/ioe.rs` | M5IOE1・電源レール（IP2315 隔離・EPD_VDD） | papermono-rs `ioe.rs`+`touch_bus.rs` 最小移植（MIT） |
+| `src/lora.rs` | SX1262 受信専用ドライバ（連続 RX・再アーム） | papermono-rs `lora.rs::listen_rx` 移植 |
+| `src/panel.rs` | SSD1677 OTP モノクロ（フル/部分・DC バイアス保護） | papermono-rs `panel.rs` 移植 |
+| `src/draw.rs` | 軌跡マップ描画（`docs/UI.md` 第1画面） | 新規（GrayInk パターン踏襲） |
+
+BSP（`m5stack-papermono-lite` / `m5stack-papermono`）は `g:\dev\papermono-rs` を **path 依存**で参照。
+共通ロジックは本リポジトリの `nostos-frame` / `nostos-nav`。
+
+## 操作（現状）
+
+- **ボタン A（上）**: ズームイン / **ボタン B（下）**: ズームアウト（1〜100 m/px の 7 段階）
+- 画面更新は「フレーム受信・ズーム変更・3 分無受信」時。部分更新 18 回ごとに自動フル更新。
+
+## ビルド / フラッシュ（Windows）
+
+```powershell
+# esp 環境（espup）を通す
+. C:\Users\ospre\export-esp.ps1
+cd g:\dev\Nostos\firmware\nostos-fw
+cargo +esp build --release   # target/build-std/linkall は .cargo/config.toml が供給
+
+espflash flash --port COM8 --monitor target\xtensa-esp32s3-none-elf\release\nostos-fw
+```
+
+> ⚠️ シリアル観測は `espflash flash --monitor`（または DTR/RTS off の `pio device monitor`）で。
+> 素の SerialPort で COM8 を開くと USB-Serial-JTAG が download モードへ落ちる（詳細は
+> [`experiments/README.md`](experiments/README.md) の注意書き）。
+
+## 送信側（テスト）
+
+`firmware/c6l-beacon` を COM7 へ。屋内 GPS なしなら `env:c6l-beacon-dummy`（合成トラック送信）。
+
+## 未実装（次フェーズ）
+
+- 帰路ナビ画面（第2画面・薄墨の来た道 → `paint_gray` 4 階調の追加が必要）
+- 下部タブ（タッチ）・設定タブ（フロントライト 5 段階）・RGB LED 通知
+- C6L 側 HOME 長押し確定＋`FLAG_HOME` 送出（プロトコルは実装済み・C6L UI 未着手）
 
 ## 参照
 
-- ハード配線・差分分析: [`../../docs/PHASE0.md`](../../docs/PHASE0.md)
-- ツールチェーン: [`../../docs/TOOLCHAIN.md`](../../docs/TOOLCHAIN.md)
-- 土台: `g:\dev\papermono-rs`（MIT）
+- 仕様: [`../../docs/UI.md`](../../docs/UI.md) / 配線・周波数: [`../../docs/PHASE0.md`](../../docs/PHASE0.md)
+- 実機実証記録: [`experiments/README.md`](experiments/README.md)

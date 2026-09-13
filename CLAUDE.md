@@ -20,11 +20,13 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
 - **画面**: 3.97" 480×800 4階調タッチ e-ink（SSD1677）＋フロントライト
 - ハード詳細・SX1262 ピン地図は [docs/HARDWARE.md](docs/HARDWARE.md)
 
-## 技術スタック（未確定・ルート選択中）
+## 技術スタック（ルートA で確定）
 
-- **ルートA**: Rust / embassy（no-std）。[`canardleteer/papermono-rs`](https://github.com/canardleteer/papermono-rs) を土台に拡張
-- **ルートB**: 公式 C++ Meshtastic（PlatformIO / ESP-IDF）を PaperMono variant として移植
-- 選択の判断材料は [docs/APPROACH.md](docs/APPROACH.md)（Phase 0〜1 の手応えで確定）
+- **PaperMono 受信側**: Rust / embassy（no-std）。`firmware/nostos-fw` がスタンドアロン FW。
+  BSP は [`canardleteer/papermono-rs`](https://github.com/canardleteer/papermono-rs)（`g:\dev\papermono-rs`）を **path 依存**で参照
+- **C6L 送信側**: C++ / pioarduino（`firmware/c6l-beacon`。公式 PlatformIO は C6 非対応）
+- 通信は Meshtastic ではなく **Nostos-native 生 LoRa 16 バイトフレーム**（`crates/nostos-frame`）
+- 経緯・判断材料は [docs/APPROACH.md](docs/APPROACH.md)
 
 ## ライセンス注意
 
@@ -40,11 +42,16 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
 
 ## 現状
 
-- 雛形段階（未着手）。技術調査を docs/ に集約済み。実装ルートは未確定。
-- 次の一手候補: papermono-rs で C6L の毎分 LongFast 受信を追試（Phase 0）。
+- **Phase 2 進行中**（2026-09-13）: `firmware/nostos-fw` を実機動作まで実装。
+  受信（923.000MHz/BW125/SF9/sync 0x3A 連続 camp）→ NostosFrame デコード → HOME/Trail 管理 →
+  e-ink 軌跡マップ（North-up グリッド・破線・連番・ズーム A/B）まで動作。
+- HOME は `FLAG_HOME`（flags bit1）で C6L から共有する仕様に確定（[docs/UI.md](docs/UI.md)）。
+- 未実装: 帰路ナビ画面（4 階調）・タッチタブ・設定タブ・RGB LED、C6L 側 OLED UI／HOME 長押し確定。
 
 ## 開発環境
 
 - 作業パス（Windows）: `g:\dev\Nostos\`
-- ESP32-S3 フラッシュ: ルートA=`cargo xtask`（papermono-rs 系）/ ルートB=PlatformIO or esptool
+- PaperMono フラッシュ: `firmware/nostos-fw` で `cargo +esp build --release` →
+  `espflash flash --port COM8 --monitor`（xtask は Windows 不可。手順は firmware/nostos-fw/README.md）
+- C6L フラッシュ: pioarduino（`firmware/c6l-beacon/README.md`）
 - 送信側 C6L の設定・技適は cardputerzero-apps の HANDOFF §3 App02 参照

@@ -1,0 +1,15 @@
+# nostos-fw はデバイス専用パッケージのため、target / build-std をここで固定する
+# （papermono-rs はホスト crate 共存のため固定していない。本パッケージは固定してよい）。
+# ビルド: このディレクトリで `cargo +esp build --release`
+# フラッシュ: `espflash flash --port COM8 --monitor target/xtensa-esp32s3-none-elf/release/nostos-fw`
+
+[build]
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["core", "alloc"]
+
+[target.xtensa-esp32s3-none-elf]
+# esp-hal の build script が OUT_DIR にリンカスクリプトを出力する。
+# -Tlinkall.x が無いと xtensa-lx-rt のベクタ未定義でリンク失敗する。
+rustflags = ["-C", "link-arg=-Tlinkall.x"]

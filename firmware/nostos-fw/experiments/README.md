@@ -99,6 +99,28 @@ cargo +esp build -p embassy-debug-fw --profile release-fw `
 espflash flash --port COM8 --monitor target\xtensa-esp32s3-none-elf\release-fw\embassy-debug-fw
 ```
 
+## 実機検証結果（nostos-fw 本実装・2026-09-13・PaperMono COM8 / C6L COM7）
+
+パッチ運用（papermono-rs 改造）を卒業し、**スタンドアロンの `firmware/nostos-fw`** で
+起動 → SX1262 連続 camp → 受信 → デコード → Trail → e-ink 軌跡マップまでを実機確認。
+
+```text
+nostos-fw: bring_up pm1=1 ioe_addr=Some(79)
+nostos-fw: sx get_status raw=0xa2
+nostos-fw: sx1262 probe=1
+nostos-fw: rx camp 923.000MHz BW125 SF9 sync 0x3A
+nostos-rx: seq=61 fix=1 home=0 lat_e7=350274500 lon_e7=1350335500 ... rssi=-54 snr=10 len=16
+nostos-rx: trail=2 home_set=0 home_dist_m=70  home_bearing_deg=225
+nostos-rx: trail=8 home_set=0 home_dist_m=495 home_bearing_deg=225   # seq61〜68 連続・欠落ゼロ
+```
+
+開発中に踏んだ SX1262 の罠 2 件（再発防止のため記録）:
+
+1. **コールドブート直後の GET_STATUS は raw=0xAA**（StbyRc＋command 実行失敗）を返し、
+   `is_ok()` 判定だと偽陰性。→ **SetStandby(RC) 発行後に `is_standby()` で判定**（raw=0xA2）。
+2. **RX continuous 中の再アーム**を SetBufferBaseAddress→SetRx だけで行うと、2 パケット目
+   以降の読み出しがずれ NostosFrame CRC8 不一致（LoRa CRC は通過）。→ **SetStandby を挟む**。
+
 ## ビルド/フラッシュ（Windows・xtask 非対応のため直接）
 
 ```bash

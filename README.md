@@ -36,8 +36,11 @@ Nostos（本リポジトリ）はその **PaperMono プロトタイプ兼構想�
 
 ## 現状
 
-- 未着手（雛形段階）。技術調査は [`docs/`](docs/) に集約。
-- PaperMono 用 Meshtastic 実装は既製品が無く、`canardleteer/papermono-rs`（実機で Meshtastic フレーム受信を確認済み）を土台にできる。詳細は [docs/APPROACH.md](docs/APPROACH.md)。
+- **Phase 2 進行中**（2026-09-13）: [`firmware/nostos-fw`](firmware/nostos-fw/)（Rust/embassy スタンドアロン受信 FW）が実機動作。
+  Nostos-native 生 LoRa（923.000MHz / 16 バイトフレーム）の連続受信 → デコード → HOME/Trail 管理 →
+  e-ink 軌跡マップ描画まで実装。送信側は [`firmware/c6l-beacon`](firmware/c6l-beacon/)（LBT 準拠）。
+- 残り: 帰路ナビ画面・タッチタブ・設定・RGB LED、C6L 側 OLED UI／HOME 長押し確定。
+- 実機実証の記録は [`firmware/nostos-fw/experiments/README.md`](firmware/nostos-fw/experiments/README.md)。
 
 ## ターゲット / スタック
 
@@ -45,4 +48,4 @@ Nostos（本リポジトリ）はその **PaperMono プロトタイプ兼構想�
 - **SoC**: ESP32-S3R8 / 16MB Flash / 8MB PSRAM
 - **無線**: SX1262（Stamp LoRa-1262）868〜923MHz
 - **画面**: 3.97" 480×800 4階調タッチ e-ink（SSD1677）＋フロントライト
-- **候補ルート**: (A) Rust/embassy（papermono-rs 拡張） / (B) 公式 C++ Meshtastic 移植 — [docs/APPROACH.md](docs/APPROACH.md)
+- **確定ルート**: (A) Rust/embassy。BSP は papermono-rs を path 依存で利用 — [docs/APPROACH.md](docs/APPROACH.md)
