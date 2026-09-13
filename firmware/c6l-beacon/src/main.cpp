@@ -50,8 +50,9 @@ static const float    MOVE_THRESHOLD_M = 30.0f;          // 前回送信位置�
 #if DUMMY_GPS
 static const double   DUMMY_BASE_LAT = 35.0000000;   // 出発点（最古点＝homing 基準）
 static const double   DUMMY_BASE_LON = 135.0000000;
-static const double   DUMMY_STEP_LAT = 0.00045;      // ≈ +50m/送信（北）
-static const double   DUMMY_STEP_LON = 0.00055;      // ≈ +50m/送信（東・35°N）
+// ランダムウォーク: 歩幅は一定・方向は毎送信ランダム（直線トラックだと帰路方位線が
+// 軌跡の真上に乗り判読できないため・2026-09-13）。HW RNG（esp_random）使用。
+static const double   DUMMY_STEP_M   = 70.0;         // 1 送信あたりの移動量 [m]
 static const uint32_t DUMMY_EPOCH    = 1789000000UL; // 固定基準 unix 秒（各送信 +60s）
 #endif
 
@@ -135,6 +136,10 @@ static bool send_frame(bool fix, int32_t lat_e7, int32_t lon_e7, uint32_t t, con
 
 void setup() {
   Serial.begin(115200);
+  // USB-Serial-JTAG の CDC はホスト未接続/未読み取りだと printf がブロックし、
+  // 長時間運用でビーコンごとフリーズし得る（2026-09-13 実測: 数十分で送信停止）。
+  // 送信タイムアウト 0 で「捨てて続行」させる。
+  Serial.setTxTimeoutMs(0);
   Serial1.begin(9600, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
   pinMode(PIN_BUTTON, INPUT_PULLUP);
 
@@ -174,10 +179,27 @@ void loop() {
   uint32_t t = gps_unix_time();
 
 #if DUMMY_GPS
-  // 屋内 E2E 検証：実 GPS を無視し、seq に応じた合成トラックで上書き（fix=1 扱い）。
+  // 屋内 E2E 検証：実 GPS を無視し、ランダムウォークの合成トラックで上書き（fix=1 扱い）。
+  // このブロックは loop() ごとに通るため、seq が進んだ回数分だけ歩を進める（冪等）。
   fix = true;
-  lat = DUMMY_BASE_LAT + DUMMY_STEP_LAT * seq;
-  lon = DUMMY_BASE_LON + DUMMY_STEP_LON * seq;
+  {
+    static double  walk_lat = DUMMY_BASE_LAT;
+    static double  walk_lon = DUMMY_BASE_LON;
+    static uint8_t walk_done_seq = 0;  // walk_lat/lon が対応する送信 seq
+    if (walk_done_seq > seq) {         // seq が u8 で巡回したら基準点へ戻す
+      walk_done_seq = 0;
+      walk_lat = DUMMY_BASE_LAT;
+      walk_lon = DUMMY_BASE_LON;
+    }
+    while (walk_done_seq < seq) {
+      double hdg = (double)esp_random() / 4294967296.0 * TWO_PI;  // 0..2π 一様
+      walk_lat += (DUMMY_STEP_M * cos(hdg)) / 111320.0;
+      walk_lon += (DUMMY_STEP_M * sin(hdg)) / (111320.0 * cos(walk_lat * DEG_TO_RAD));
+      walk_done_seq++;
+    }
+    lat = walk_lat;
+    lon = walk_lon;
+  }
   lat_e7 = (int32_t)(lat * 1e7);
   lon_e7 = (int32_t)(lon * 1e7);
   t = DUMMY_EPOCH + (uint32_t)seq * 60;
