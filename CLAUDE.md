@@ -55,7 +55,9 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
 - **PaperMono の UI 一式も実機動作**（2026-09-13）: 下部 3 タブ（軌跡/帰路/設定・日本語 16×16
   グリフ＝`tools/gen_jpfont.py` 生成）・設定タブ（フロントライト 5 段階＋自動消灯 30s）・
   RGB LED 通知（赤=低電池/橙=途絶/緑=受信/青=給電）。docs/UI.md の主要機能は全て実装済み。
-- 残: 実 GPS での屋外フィールドテスト、CardputerZero 版への移植（cardputerzero-apps）。
+- 残: コールドブート固着の解明（工場ファーム・M5PM1/M5IOE1 のソース公開を確認済み。
+  解析リソースは firmware/nostos-fw/README.md「電源」節）、実 GPS での屋外フィールドテスト、
+  CardputerZero 版への移植（cardputerzero-apps）。
 
 ## 開発環境
 

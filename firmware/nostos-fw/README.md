@@ -75,6 +75,18 @@ BSP（`m5stack-papermono-lite` / `m5stack-papermono`）は `g:\dev\papermono-rs`
   ②`_after_wake` の RAM 自動クリア 0x46/0x47（移植済み・単独では回復せず）
   ③固着の引き金は「パネルが Deep Sleep Mode 1 のまま電源断」の疑い
 - USB の抜き挿しは**画面静止時**に行うこと（更新中の電源変動が固着の引き金）
+- **解析リソース（2026-09-13 判明・次回はソース照合から着手）**:
+  - 工場ファームのソースが公開されている:
+    [M5PaperMono-UserDemo](https://github.com/m5stack/M5PaperMono-UserDemo)（ESP-IDF・工場ファーム本体）／
+    [M5PaperMono-OTP-Demo](https://github.com/m5stack/M5PaperMono-OTP-Demo)（SSD1677 直叩き・OTP 波形の最小例）
+  - 電源チップのドライバも Arduino ライブラリ **M5PM1 / M5IOE1** として公開（レジスタレベルで読める）
+  - 公式 docs（[電源管理](https://docs.m5stack.com/ja/arduino/papermono/m5pm1_m5ioe1)）: 電源は
+    L0〜L3B の階層構造。**L3B（画面・タッチ等）は IOE1 で個別制御**。e-ink 電源=IOE1 P3／リセット=P5
+  - IOE1 ピンは使用前に `setHighImpedance(pin, false)` の解除が必要（公式 microSD 例）。
+    **コールドブート時に e-ink 電源ピンの高インピーダンス解除が漏れている疑い（第一容疑）**
+  - LoRa は電源=PM1 GPIO2／リセット=IOE1 GPIO10／アンテナ SW=IOE1 GPIO2（公式 LoRa ページ）
+- 復旧実績（2026-09-13）: 電源ボタン誤操作でフリーズ → ダウンロードモード →
+  上記手順 1 の工場イメージ書き込みで復旧を確認（`espflash write-bin` 正常終了・工場デモ起動）
 
 ## 日本語表示
 

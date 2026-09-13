@@ -30,6 +30,9 @@ __pycache__/
 .venv/
 venv/
 
+# Claude Code（settings.json は共有・local は個人用）
+.claude/settings.local.json
+
 # Editor / IDE
 .vscode/*
 !.vscode/settings.json
