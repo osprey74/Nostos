@@ -127,6 +127,29 @@ pub fn set_push_pull_output(
     }
 }
 
+/// 指定レジスタからのバースト読み出し（FT6336G の座標レジスタ一括取得用）。
+pub fn read_burst(i2c: &mut SysI2c, addr: u8, reg: u8, buf: &mut [u8]) -> bool {
+    i2c.write_read(addr, &[reg], buf).is_ok()
+}
+
+/// FT6336G から第 1 接触点を読む。戻り値は（接触点数, 物理 x, 物理 y）。
+///
+/// 座標は USB 下向き 480×800 の物理フレームバッファ系（M5GFX 準拠）。
+/// 非接触・読み出し失敗は None。
+pub fn read_touch(i2c: &mut SysI2c) -> Option<(u8, u16, u16)> {
+    use m5stack_papermono_lite::touch;
+    const LEN: usize = 1 + (touch::MAX_POINTS as usize) * touch::M5GFX_POINT_BYTES;
+    let mut buf = [0u8; LEN];
+    if !read_burst(i2c, addresses::FT6336G, touch::M5GFX_STATUS_REG, &mut buf) {
+        return None;
+    }
+    let (n, x, y, _x2, _y2) = touch::decode_m5gfx(&buf)?;
+    if n == 0 {
+        return None;
+    }
+    Some((n, x, y))
+}
+
 /// M5PM1 の ADC からバッテリ電圧 [mV] を読む（touch_bus `read_adc_mv` と同手順）。
 pub fn read_vbat_mv(i2c: &mut SysI2c) -> Option<u16> {
     let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);

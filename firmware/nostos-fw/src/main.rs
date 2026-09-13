@@ -15,7 +15,9 @@
 //! - HOME 未受信の間は「HOME not received」表示（軌跡プロットは通常どおり）
 //!
 //! 操作: ボタン A（GPIO2）＝ズームイン / ボタン B（GPIO3）＝ズームアウト /
-//! 画面タップ（TOUCH_INT GPIO4）＝軌跡 ⇄ 帰路の画面切替（タブ実装までの暫定）。
+//! タップ＝軌跡 ⇄ 帰路の画面切替（タブ実装までの暫定） /
+//! スワイプ＝軌跡マップのパン（1 スワイプ 1 回・自動追従停止） /
+//! 長押し（0.8s）＝再センタリング（自動追従へ復帰）。
 
 #![no_std]
 #![no_main]
@@ -47,6 +49,15 @@ const TRAIL_CAP: usize = 256;
 
 /// 受信途絶とみなす秒数（この経過で画面を再描画し AGE を更新）。
 const STALE_REDRAW_SECS: u64 = 180;
+
+/// スワイプと判定する最小移動量 [page px]。これ未満はタップ扱い。
+const SWIPE_MIN_PX: i32 = 40;
+
+/// 再センタリングの長押し時間 [ms]。
+const LONG_PRESS_MS: u64 = 800;
+
+/// 指離れ確定までの無接触 tick 数（50ms 周期 ×3 ≒ 150ms）。
+const TOUCH_RELEASE_TICKS: u8 = 3;
 
 /// 表示中の画面。タップで循環切替。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,10 +158,16 @@ async fn main(_spawner: Spawner) -> ! {
     let mut last_render_at = Instant::now();
     let mut scale_idx: usize = 1; // 2 m/px（グリッド 1 マス = 160 m）
     let mut screen = Screen::Trail;
+    let mut view_center: Option<GeoPoint> = None; // Some = パン中（自動追従停止）
     let mut prev_a = false;
     let mut prev_b = false;
-    let mut prev_tp = false;
     let mut last_toggle_at = Instant::now();
+    // タッチジェスチャ状態。
+    let mut touch_active = false;
+    let mut touch_start = (0i32, 0i32);
+    let mut touch_last = (0i32, 0i32);
+    let mut touch_started_at = Instant::now();
+    let mut touch_idle: u8 = 0;
 
     // 初期画面（受信待ち）。
     render_and_paint(
@@ -162,6 +179,7 @@ async fn main(_spawner: Spawner) -> ! {
         home,
         scale_idx,
         screen,
+        view_center,
         radio_ok,
         &mut panel,
         &mut i2c,
@@ -204,6 +222,7 @@ async fn main(_spawner: Spawner) -> ! {
                             home.is_none_or(|h| nostos_nav::haversine_m(h, p) > 1.0);
                         if changed {
                             trail = Trail::new();
+                            view_center = None;
                             println!("nostos-rx: HOME set, trail reset");
                         }
                         home = Some(p);
@@ -260,22 +279,78 @@ async fn main(_spawner: Spawner) -> ! {
         prev_a = a;
         prev_b = b;
 
-        // --- タップ（TOUCH_INT 立ち下がり）で画面切替。e-ink 更新中の多重反応を
-        // 避けるため 1.5 秒のクールダウンを置く ---
-        let t = tp.is_low();
-        if t && !prev_tp && last_toggle_at.elapsed() >= Duration::from_millis(1500) {
-            screen = match screen {
-                Screen::Trail => Screen::Homing,
-                Screen::Homing => Screen::Trail,
-            };
-            last_toggle_at = Instant::now();
-            println!(
-                "nostos-fw: screen -> {}",
-                if screen == Screen::Trail { "trail" } else { "homing" }
-            );
-            redraw = true;
+        // --- タッチジェスチャ判別 ---
+        // タップ（短・移動小）＝画面切替 / スワイプ（移動大）＝軌跡マップのパン /
+        // 長押し（0.8s・移動小）＝再センタリング。指を離した時点で 1 回だけ判定する
+        // （e-ink は追従描画不可のため）。ホールド中は INT が上がっても座標を読み続ける。
+        let mut pt: Option<(i32, i32)> = None;
+        if tp.is_low() || touch_active {
+            if let Some((n, fx, fy)) = ioe::read_touch(&mut i2c) {
+                if n >= 1 {
+                    if let Some((px, py)) =
+                        display::framebuffer_to_page(fx, fy, display::PageRotation::Portrait0)
+                    {
+                        pt = Some((i32::from(px), i32::from(py)));
+                    }
+                }
+            }
         }
-        prev_tp = t;
+        match pt {
+            Some(p) => {
+                if !touch_active {
+                    touch_active = true;
+                    touch_start = p;
+                    touch_started_at = Instant::now();
+                }
+                touch_last = p;
+                touch_idle = 0;
+            }
+            None if touch_active => {
+                touch_idle += 1;
+                if touch_idle >= TOUCH_RELEASE_TICKS {
+                    touch_active = false;
+                    touch_idle = 0;
+                    let dx = touch_last.0 - touch_start.0;
+                    let dy = touch_last.1 - touch_start.1;
+                    let swiped = dx * dx + dy * dy >= SWIPE_MIN_PX * SWIPE_MIN_PX;
+                    let held_long =
+                        touch_started_at.elapsed() >= Duration::from_millis(LONG_PRESS_MS);
+                    if swiped {
+                        if screen == Screen::Trail {
+                            let auto = trail.newest().or(home);
+                            if let Some(c) = view_center.or(auto) {
+                                view_center = Some(draw::pan_center(
+                                    c,
+                                    dx,
+                                    dy,
+                                    draw::SCALE_M_PER_PX[scale_idx],
+                                ));
+                                println!("nostos-fw: pan dx={} dy={}", dx, dy);
+                                redraw = true;
+                            }
+                        }
+                    } else if held_long {
+                        if view_center.is_some() {
+                            view_center = None;
+                            println!("nostos-fw: recenter");
+                            redraw = true;
+                        }
+                    } else if last_toggle_at.elapsed() >= Duration::from_millis(1500) {
+                        screen = match screen {
+                            Screen::Trail => Screen::Homing,
+                            Screen::Homing => Screen::Trail,
+                        };
+                        last_toggle_at = Instant::now();
+                        println!(
+                            "nostos-fw: screen -> {}",
+                            if screen == Screen::Trail { "trail" } else { "homing" }
+                        );
+                        redraw = true;
+                    }
+                }
+            }
+            None => {}
+        }
 
         // --- 受信が途絶えても AGE 表示を進める（再描画は控えめに）---
         if !redraw
@@ -295,6 +370,7 @@ async fn main(_spawner: Spawner) -> ! {
                 home,
                 scale_idx,
                 screen,
+                view_center,
                 radio_ok,
                 &mut panel,
                 &mut i2c,
@@ -317,6 +393,7 @@ async fn render_and_paint(
     home: Option<GeoPoint>,
     scale_idx: usize,
     screen: Screen,
+    view_center: Option<GeoPoint>,
     radio_ok: bool,
     panel: &mut Option<panel::Panel>,
     i2c: &mut ioe::SysI2c,
@@ -333,6 +410,7 @@ async fn render_and_paint(
         home_provisional: home.is_none(),
         radio_ok,
         vbat_mv: ioe::read_vbat_mv(i2c),
+        view_center,
     };
     match screen {
         Screen::Trail => {

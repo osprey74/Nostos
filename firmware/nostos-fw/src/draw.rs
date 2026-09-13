@@ -61,6 +61,8 @@ pub struct Status {
     pub radio_ok: bool,
     /// バッテリ電圧 [mV]（M5PM1 ADC）。読めなければ None。
     pub vbat_mv: Option<u16>,
+    /// スワイプパン中の固定表示中心（軌跡マップのみ）。None = 最新受信点へ自動追従。
+    pub view_center: Option<GeoPoint>,
 }
 
 /// 最新受信フレームの表示用スナップショット。
@@ -449,6 +451,20 @@ fn project(p: GeoPoint, center: GeoPoint, m_per_px: u32) -> (i32, i32) {
     (px, py)
 }
 
+/// スワイプ量 [px] だけ表示中心をずらした新しい中心を返す（コンテンツが指に追従する向き）。
+///
+/// 指を右へ動かす（+dx）と地図が右へ流れ、表示中心は西（-lon）へ動く。
+/// 指を下へ動かす（+dy）と表示中心は北（+lat）へ動く（North-up）。
+pub fn pan_center(center: GeoPoint, dx_px: i32, dy_px: i32, m_per_px: u32) -> GeoPoint {
+    let m = f64::from(m_per_px);
+    let north_m = f64::from(dy_px) * m;
+    let east_m = -f64::from(dx_px) * m;
+    GeoPoint::new(
+        center.lat + north_m / M_PER_DEG_LAT,
+        center.lon + east_m / m_per_deg_lon(center.lat),
+    )
+}
+
 /// 直近の進路（course made good）[度]。trail が 2 点未満なら None。
 fn course_deg<const N: usize>(trail: &Trail<N>) -> Option<f64> {
     let n = trail.len();
@@ -639,7 +655,19 @@ pub fn render_trail<const N: usize>(
     draw_radio_warning(bw, red, st.radio_ok);
     draw_scalebar(bw, red, st.m_per_px);
 
-    if let Some(center) = trail.newest().or(st.home) {
+    // パン中は自動追従を止めた固定中心を明示（長押しで復帰）。
+    if st.view_center.is_some() {
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::with_alignment(
+            "PAN (hold=recenter)",
+            Point::new(PAGE_W / 2, MAP_Y0 + 24),
+            mid,
+            Alignment::Center,
+        )
+        .draw(&mut ink);
+    }
+
+    if let Some(center) = st.view_center.or_else(|| trail.newest()).or(st.home) {
         let mut prev: Option<(i32, i32)> = None;
         for p in trail.iter() {
             let (px, py) = project(p, center, st.m_per_px);
