@@ -52,7 +52,10 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
   正式 HOME に置換される E2E を確認済み。
 - HOME は `FLAG_HOME`（flags bit1）で C6L から共有（[docs/UI.md](docs/UI.md)）。
   未受信の間は最初の受信点を暫定出発点（HOME* 表記）として帰路表示。
-- 未実装: タッチタブ（座標デコード）・設定タブ・RGB LED 通知（PaperMono 側）・日本語フォント。
+- **PaperMono の UI 一式も実機動作**（2026-09-13）: 下部 3 タブ（軌跡/帰路/設定・日本語 16×16
+  グリフ＝`tools/gen_jpfont.py` 生成）・設定タブ（フロントライト 5 段階＋自動消灯 30s）・
+  RGB LED 通知（赤=低電池/橙=途絶/緑=受信/青=給電）。docs/UI.md の主要機能は全て実装済み。
+- 残: 実 GPS での屋外フィールドテスト、CardputerZero 版への移植（cardputerzero-apps）。
 
 ## 開発環境
 

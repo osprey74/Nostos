@@ -24,6 +24,8 @@
 
 mod draw;
 mod ioe;
+mod jpfont;
+mod led;
 mod lora;
 mod panel;
 
@@ -59,14 +61,31 @@ const LONG_PRESS_MS: u64 = 800;
 /// 指離れ確定までの無接触 tick 数（50ms 周期 ×3 ≒ 150ms）。
 const TOUCH_RELEASE_TICKS: u8 = 3;
 
-/// 表示中の画面。タップで循環切替。
+/// 表示中の画面。下部タブのタップで切替。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
     /// 第1画面：軌跡マップ（モノクロ・部分更新）。
     Trail,
     /// 第2画面：帰路ナビ（4 階調・常にフル更新）。
     Homing,
+    /// 第3画面：設定（モノクロ）。
+    Settings,
 }
+
+/// フロントライト輝度 5 段階のデューティ（0=OFF〜4=最大）。
+fn brightness_duty(idx: usize) -> u16 {
+    use m5stack_papermono_lite::pmic::PWM0_DUTY_MAX;
+    match idx {
+        0 => 0,
+        1 => PWM0_DUTY_MAX / 8,
+        2 => PWM0_DUTY_MAX / 4,
+        3 => PWM0_DUTY_MAX / 2,
+        _ => PWM0_DUTY_MAX,
+    }
+}
+
+/// 自動消灯までの無操作時間 [秒]。
+const AUTO_OFF_SECS: u64 = 30;
 
 // e-ink 用 1bpp プレーン（480×800 / 8 = 48,000 バイト ×2）。静的確保。
 static BW_PLANE: ConstStaticCell<[u8; display::PLANE_BYTES]> =
@@ -168,6 +187,14 @@ async fn main(_spawner: Spawner) -> ! {
     let mut touch_last = (0i32, 0i32);
     let mut touch_started_at = Instant::now();
     let mut touch_idle: u8 = 0;
+    // 設定・電源・LED 状態。
+    let mut brightness_idx: usize = 0; // 0=OFF
+    let mut auto_off = true;
+    let mut light_dimmed = false; // 自動消灯で一時 OFF 中
+    let mut last_input_at = Instant::now();
+    let mut vbat_cache = ioe::read_vbat_mv(&mut i2c);
+    let mut vin_cache = ioe::read_vin_mv(&mut i2c);
+    let mut led_ctl = led::Led::new();
 
     // 初期画面（受信待ち）。
     render_and_paint(
@@ -181,6 +208,7 @@ async fn main(_spawner: Spawner) -> ! {
         screen,
         view_center,
         radio_ok,
+        (brightness_idx, auto_off, vbat_cache, vin_cache),
         &mut panel,
         &mut i2c,
         &busy,
@@ -197,6 +225,11 @@ async fn main(_spawner: Spawner) -> ! {
         if dbg_tick % 1200 == 0 {
             let (irq, rssi, raw) = radio.debug_status();
             println!("nostos-fw: dbg irq=0x{:04x} rssi={} status=0x{:02x}", irq, rssi, raw);
+        }
+        // 電源状態は 5 秒ごとに更新（LED 判定と設定画面表示に使用）。
+        if dbg_tick % 100 == 0 {
+            vbat_cache = ioe::read_vbat_mv(&mut i2c);
+            vin_cache = ioe::read_vin_mv(&mut i2c);
         }
 
         // --- 受信ポーリング ---
@@ -266,16 +299,35 @@ async fn main(_spawner: Spawner) -> ! {
             }
         }
 
-        // --- ボタン（立ち下がりエッジでズーム）---
+        // --- ボタン（立ち下がりエッジ。地図＝ズーム / 設定＝明るさ）---
         let a = btn_a.is_low();
         let b = btn_b.is_low();
-        if a && !prev_a && scale_idx > 0 {
-            scale_idx -= 1;
-            redraw = true;
+        let mut input = false;
+        if a && !prev_a {
+            input = true;
+            if screen == Screen::Settings {
+                if brightness_idx < 4 {
+                    brightness_idx += 1;
+                    ioe::set_frontlight(&mut i2c, brightness_duty(brightness_idx));
+                    redraw = true;
+                }
+            } else if scale_idx > 0 {
+                scale_idx -= 1;
+                redraw = true;
+            }
         }
-        if b && !prev_b && scale_idx + 1 < draw::SCALE_M_PER_PX.len() {
-            scale_idx += 1;
-            redraw = true;
+        if b && !prev_b {
+            input = true;
+            if screen == Screen::Settings {
+                if brightness_idx > 0 {
+                    brightness_idx -= 1;
+                    ioe::set_frontlight(&mut i2c, brightness_duty(brightness_idx));
+                    redraw = true;
+                }
+            } else if scale_idx + 1 < draw::SCALE_M_PER_PX.len() {
+                scale_idx += 1;
+                redraw = true;
+            }
         }
         prev_a = a;
         prev_b = b;
@@ -311,6 +363,7 @@ async fn main(_spawner: Spawner) -> ! {
                 if touch_idle >= TOUCH_RELEASE_TICKS {
                     touch_active = false;
                     touch_idle = 0;
+                    input = true;
                     let dx = touch_last.0 - touch_start.0;
                     let dy = touch_last.1 - touch_start.1;
                     let swiped = dx * dx + dy * dy >= SWIPE_MIN_PX * SWIPE_MIN_PX;
@@ -336,22 +389,70 @@ async fn main(_spawner: Spawner) -> ! {
                             println!("nostos-fw: recenter");
                             redraw = true;
                         }
-                    } else if last_toggle_at.elapsed() >= Duration::from_millis(1500) {
-                        screen = match screen {
-                            Screen::Trail => Screen::Homing,
-                            Screen::Homing => Screen::Trail,
+                    } else if touch_last.1 >= draw::TAB_Y0 {
+                        // 下部タブのタップで画面切替（e-ink 更新中の多重反応防止に 1.5s）。
+                        let tab = match touch_last.0 / 160 {
+                            0 => Screen::Trail,
+                            1 => Screen::Homing,
+                            _ => Screen::Settings,
                         };
-                        last_toggle_at = Instant::now();
-                        println!(
-                            "nostos-fw: screen -> {}",
-                            if screen == Screen::Trail { "trail" } else { "homing" }
-                        );
+                        if tab != screen
+                            && last_toggle_at.elapsed() >= Duration::from_millis(1500)
+                        {
+                            screen = tab;
+                            last_toggle_at = Instant::now();
+                            println!(
+                                "nostos-fw: screen -> {}",
+                                match screen {
+                                    Screen::Trail => "trail",
+                                    Screen::Homing => "homing",
+                                    Screen::Settings => "settings",
+                                }
+                            );
+                            redraw = true;
+                        }
+                    } else if screen == Screen::Settings
+                        && touch_last.1 >= draw::SETTINGS_AUTOOFF_Y.0
+                        && touch_last.1 < draw::SETTINGS_AUTOOFF_Y.1
+                    {
+                        auto_off = !auto_off;
+                        println!("nostos-fw: auto_off -> {}", auto_off as u8);
                         redraw = true;
                     }
                 }
             }
             None => {}
         }
+
+        // --- フロントライトの自動消灯 / 操作での復帰 ---
+        if input {
+            last_input_at = Instant::now();
+            if light_dimmed {
+                light_dimmed = false;
+                if brightness_idx > 0 {
+                    ioe::set_frontlight(&mut i2c, brightness_duty(brightness_idx));
+                }
+            }
+        } else if auto_off
+            && !light_dimmed
+            && brightness_idx > 0
+            && last_input_at.elapsed() >= Duration::from_secs(AUTO_OFF_SECS)
+        {
+            light_dimmed = true;
+            ioe::set_frontlight(&mut i2c, 0);
+        }
+
+        // --- RGB LED ステータス（優先度: 赤=低電池 > 橙=途絶 > 緑=受信 > 青=給電）---
+        led_ctl.update(
+            &mut i2c,
+            &led::LedInputs {
+                age_secs: last_rx_at.map(|t| t.elapsed().as_secs()),
+                last_rx_at,
+                vbat_mv: vbat_cache,
+                vin_mv: vin_cache,
+                stale_secs: STALE_REDRAW_SECS,
+            },
+        );
 
         // --- 受信が途絶えても AGE 表示を進める（再描画は控えめに）---
         if !redraw
@@ -373,6 +474,7 @@ async fn main(_spawner: Spawner) -> ! {
                 screen,
                 view_center,
                 radio_ok,
+                (brightness_idx, auto_off, vbat_cache, vin_cache),
                 &mut panel,
                 &mut i2c,
                 &busy,
@@ -396,6 +498,8 @@ async fn render_and_paint(
     screen: Screen,
     view_center: Option<GeoPoint>,
     radio_ok: bool,
+    // (輝度段階, 自動消灯, VBAT[mV], VIN[mV])
+    power_ui: (usize, bool, Option<u16>, Option<u16>),
     panel: &mut Option<panel::Panel>,
     i2c: &mut ioe::SysI2c,
     busy: &Input<'static>,
@@ -410,8 +514,11 @@ async fn render_and_paint(
         homing: anchor.and_then(|h| trail.homing(h)),
         home_provisional: home.is_none(),
         radio_ok,
-        vbat_mv: ioe::read_vbat_mv(i2c),
+        vbat_mv: power_ui.2,
         view_center,
+        brightness_idx: power_ui.0,
+        auto_off: power_ui.1,
+        vin_mv: power_ui.3,
     };
     match screen {
         Screen::Trail => {
@@ -424,6 +531,12 @@ async fn render_and_paint(
             draw::render_homing(bw, red, trail, &st);
             if let Some(p) = panel.as_mut() {
                 p.paint_gray(i2c, bw, red, busy).await;
+            }
+        }
+        Screen::Settings => {
+            draw::render_settings(bw, red, &st);
+            if let Some(p) = panel.as_mut() {
+                p.paint_mono_fast(i2c, bw, red, busy).await;
             }
         }
     }

@@ -23,6 +23,8 @@ use embedded_graphics::text::{Alignment, Text};
 use m5stack_papermono_lite::display::{self, PageRotation};
 use nostos_nav::{bearing_deg, GeoPoint, Homing, Trail};
 
+use crate::jpfont;
+
 /// 固定ページ回転（USB 下・縦持ち）。
 const ROT: PageRotation = PageRotation::Portrait0;
 
@@ -31,11 +33,17 @@ const PAGE_W: i32 = display::PAGE_PORTRAIT_W as i32;
 /// ページ高（Portrait0 = 800）。
 const PAGE_H: i32 = display::PAGE_PORTRAIT_H as i32;
 
-// マップ領域（ヘッダ下〜フッタ上。モックアップの区切り 64 / 688 に合わせる）。
+// マップ領域（ヘッダ下〜フッタ上。モックアップの区切り 64 / 688 / 760 に合わせる）。
 const MAP_X0: i32 = 0;
 const MAP_Y0: i32 = 66;
 const MAP_X1: i32 = PAGE_W - 1;
 const MAP_Y1: i32 = 688;
+
+/// 下部タブバーの上端 y（タブ高 40px・3 分割）。タップ判定にも使う。
+pub const TAB_Y0: i32 = 760;
+
+/// 設定画面「自動消灯」行のタップ判定 y 範囲（ページ座標）。
+pub const SETTINGS_AUTOOFF_Y: (i32, i32) = (236, 296);
 
 /// グリッド間隔 [px]（スケールバーと連動）。
 const GRID_PX: i32 = 80;
@@ -63,6 +71,12 @@ pub struct Status {
     pub vbat_mv: Option<u16>,
     /// スワイプパン中の固定表示中心（軌跡マップのみ）。None = 最新受信点へ自動追従。
     pub view_center: Option<GeoPoint>,
+    /// フロントライト輝度段階（0=OFF〜4=最大。設定画面用）。
+    pub brightness_idx: usize,
+    /// 自動消灯（無操作 30 秒でフロントライト OFF）。
+    pub auto_off: bool,
+    /// VIN 電圧 [mV]（USB 給電検出・設定画面用）。
+    pub vin_mv: Option<u16>,
 }
 
 /// 最新受信フレームの表示用スナップショット。
@@ -481,6 +495,55 @@ fn course_deg<const N: usize>(trail: &Trail<N>) -> Option<f64> {
 }
 
 // ---------------------------------------------------------------------------
+// 日本語テキスト（16×16 グリフ・tools/gen_jpfont.py 生成）
+// ---------------------------------------------------------------------------
+
+/// 日本語文字列を描く（未収録文字はスキップ）。戻り値は描画幅 [px]。
+fn draw_jp(bw: &mut [u8], red: &mut [u8], x: i32, y: i32, text: &str, tone: u8) -> i32 {
+    let mut cx = x;
+    for ch in text.chars() {
+        if let Some(g) = jpfont::glyph(ch) {
+            for row in 0..jpfont::GLYPH_H {
+                let bits = u16::from_be_bytes([g[(row * 2) as usize], g[(row * 2 + 1) as usize]]);
+                for col in 0..jpfont::GLYPH_W {
+                    if bits & (0x8000 >> col) != 0 {
+                        set_tone(bw, red, cx + col, y + row, tone);
+                    }
+                }
+            }
+            cx += jpfont::GLYPH_W;
+        }
+    }
+    cx - x
+}
+
+/// 下部 3 タブ（軌跡 / 帰路 / 設定）。`active` のタブは黒地に白抜き。
+fn draw_tabs(bw: &mut [u8], red: &mut [u8], active: usize) {
+    line(bw, red, 0, TAB_Y0, PAGE_W - 1, TAB_Y0);
+    line(bw, red, 0, TAB_Y0 + 1, PAGE_W - 1, TAB_Y0 + 1);
+    line(bw, red, 160, TAB_Y0, 160, PAGE_H - 1);
+    line(bw, red, 320, TAB_Y0, 320, PAGE_H - 1);
+
+    const LABELS: [&str; 3] = ["軌跡", "帰路", "設定"];
+    for (i, label) in LABELS.iter().enumerate() {
+        let x0 = 160 * i as i32;
+        let tone = if i == active {
+            // 黒地に白抜き。
+            for py in TAB_Y0 + 2..PAGE_H {
+                for px in x0..x0 + 160 {
+                    set_tone(bw, red, px, py, display::GRAY_BLACK);
+                }
+            }
+            display::GRAY_WHITE
+        } else {
+            display::GRAY_BLACK
+        };
+        // 2 文字 ×16px = 32px をセル中央へ。
+        draw_jp(bw, red, x0 + (160 - 32) / 2, TAB_Y0 + 12, label, tone);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 共通パーツ
 // ---------------------------------------------------------------------------
 
@@ -761,10 +824,12 @@ pub fn render_trail<const N: usize>(
         }
 
         let mut ink = Ink::black(bw, red);
-        let _ = Text::new(l1.as_str(), Point::new(16, MAP_Y1 + 30), big).draw(&mut ink);
-        let _ = Text::new(l2.as_str(), Point::new(16, MAP_Y1 + 56), mid).draw(&mut ink);
-        let _ = Text::new(l3.as_str(), Point::new(16, MAP_Y1 + 84), big).draw(&mut ink);
+        let _ = Text::new(l1.as_str(), Point::new(16, MAP_Y1 + 24), big).draw(&mut ink);
+        let _ = Text::new(l2.as_str(), Point::new(16, MAP_Y1 + 46), mid).draw(&mut ink);
+        let _ = Text::new(l3.as_str(), Point::new(16, MAP_Y1 + 66), mid).draw(&mut ink);
     }
+
+    draw_tabs(bw, red, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -937,10 +1002,127 @@ pub fn render_homing<const N: usize>(
         }
 
         let mut ink = Ink::black(bw, red);
-        let _ = Text::new(l1.as_str(), Point::new(16, MAP_Y1 + 30), big).draw(&mut ink);
-        let _ = Text::new(l2.as_str(), Point::new(16, MAP_Y1 + 56), mid).draw(&mut ink);
-        let _ = Text::new(l3.as_str(), Point::new(16, MAP_Y1 + 84), big).draw(&mut ink);
+        let _ = Text::new(l1.as_str(), Point::new(16, MAP_Y1 + 24), big).draw(&mut ink);
+        let _ = Text::new(l2.as_str(), Point::new(16, MAP_Y1 + 46), mid).draw(&mut ink);
+        let _ = Text::new(l3.as_str(), Point::new(16, MAP_Y1 + 66), mid).draw(&mut ink);
     }
+
+    draw_tabs(bw, red, 1);
+}
+
+// ---------------------------------------------------------------------------
+// 第3画面：設定（モノクロ）
+// ---------------------------------------------------------------------------
+
+/// 設定画面（フロントライト輝度・自動消灯・LED 凡例・電源状態）。
+pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
+    bw.fill(0x00);
+    red.fill(0x00);
+
+    let big = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+    let mid = MonoTextStyle::new(&FONT_9X15, BinaryColor::On);
+
+    draw_header(bw, red, st, "CONFIG");
+
+    // --- 明るさ（フロントライト 5 段階・A ▲ / B ▼）---
+    draw_jp(bw, red, 16, 100, "明るさ", display::GRAY_BLACK);
+    {
+        let mut ink = Ink::black(bw, red);
+        let s = match st.brightness_idx {
+            0 => "OFF",
+            1 => "1",
+            2 => "2",
+            3 => "3",
+            _ => "MAX",
+        };
+        let _ = Text::with_alignment(s, Point::new(PAGE_W - 20, 116), big, Alignment::Right)
+            .draw(&mut ink);
+    }
+    // 5 セグメントのバー（塗り＝現在レベル）。
+    for i in 0..5i32 {
+        let x0 = 16 + i * 88;
+        let y0 = 132;
+        let (x1, y1) = (x0 + 76, y0 + 28);
+        line(bw, red, x0, y0, x1, y0);
+        line(bw, red, x0, y1, x1, y1);
+        line(bw, red, x0, y0, x0, y1);
+        line(bw, red, x1, y0, x1, y1);
+        if (i as usize) < st.brightness_idx {
+            for py in y0 + 3..y1 - 2 {
+                for px in x0 + 3..x1 - 2 {
+                    set_tone(bw, red, px, py, display::GRAY_BLACK);
+                }
+            }
+        }
+    }
+    {
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::new("A + / B -", Point::new(16, 186), mid).draw(&mut ink);
+    }
+
+    // --- 自動消灯（タップでトグル）---
+    line(bw, red, 8, SETTINGS_AUTOOFF_Y.0, PAGE_W - 8, SETTINGS_AUTOOFF_Y.0);
+    draw_jp(bw, red, 16, 252, "自動消灯", display::GRAY_BLACK);
+    {
+        let mut ink = Ink::black(bw, red);
+        let s = if st.auto_off { "ON (30s)" } else { "OFF" };
+        let _ = Text::with_alignment(s, Point::new(PAGE_W - 20, 268), big, Alignment::Right)
+            .draw(&mut ink);
+        let _ = Text::new("(tap row to toggle)", Point::new(16, 288), mid).draw(&mut ink);
+    }
+    line(bw, red, 8, SETTINGS_AUTOOFF_Y.1, PAGE_W - 8, SETTINGS_AUTOOFF_Y.1);
+
+    // --- 通知 LED 凡例 ---
+    draw_jp(bw, red, 16, 330, "凡例", display::GRAY_BLACK);
+    {
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::new(": LED", Point::new(50, 346), mid).draw(&mut ink);
+    }
+    const LEGEND: [(&str, &str); 4] = [
+        ("受信", "GREEN blink"),
+        ("途絶", "ORANGE blink"),
+        ("低電池", "RED blink"),
+        ("充電中", "BLUE on"),
+    ];
+    for (i, (jp, en)) in LEGEND.iter().enumerate() {
+        let y = 370 + i as i32 * 34;
+        draw_jp(bw, red, 32, y, jp, display::GRAY_BLACK);
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::new(en, Point::new(160, y + 13), mid).draw(&mut ink);
+    }
+
+    // --- 電源状態 ---
+    {
+        let mut l = FmtBuf::<48>::new();
+        match st.vbat_mv {
+            Some(v) if v > 0 => {
+                let _ = write!(l, "BAT {}.{:02} V", v / 1000, (v % 1000) / 10);
+            }
+            _ => {
+                let _ = write!(l, "BAT ---");
+            }
+        }
+        match st.vin_mv {
+            Some(v) if v > 0 => {
+                let _ = write!(l, " · VIN {}.{:02} V", v / 1000, (v % 1000) / 10);
+            }
+            _ => {
+                let _ = write!(l, " · VIN ---");
+            }
+        }
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::new(l.as_str(), Point::new(16, 560), mid).draw(&mut ink);
+        let _ = Text::new(
+            concat!("nostos-fw v", env!("CARGO_PKG_VERSION")),
+            Point::new(16, MAP_Y1 + 24),
+            mid,
+        )
+        .draw(&mut ink);
+    }
+    line(bw, red, 0, MAP_Y1, PAGE_W - 1, MAP_Y1);
+    line(bw, red, 0, MAP_Y1 + 1, PAGE_W - 1, MAP_Y1 + 1);
+
+    draw_tabs(bw, red, 2);
 }
 
 /// 中心 `(cx, cy)` から `(x, y)` へ向かうベクトルを、マージン付きマップ矩形内に収める。

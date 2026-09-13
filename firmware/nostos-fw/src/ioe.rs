@@ -161,6 +161,44 @@ pub fn read_vbat_mv(i2c: &mut SysI2c) -> Option<u16> {
     Some(pmic::adc_mv(lo, hi))
 }
 
+/// M5PM1 の ADC から VIN 電圧 [mV] を読む（USB 給電/充電の検出用）。
+pub fn read_vin_mv(i2c: &mut SysI2c) -> Option<u16> {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    if let Ok(v) = pm1.read_le16(pmic::VIN_L) {
+        return Some(v);
+    }
+    let lo = pm1.read_at(pmic::VIN_L).ok()?;
+    let hi = pm1.read_at(pmic::VIN_L.wrapping_add(1)).ok()?;
+    Some(pmic::adc_mv(lo, hi))
+}
+
+/// フロントライトの PWM デューティを設定する（0 = 消灯。touch_bus `apply_lamp` と同手順）。
+pub fn set_frontlight(i2c: &mut SysI2c, duty: u16) {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    if duty == 0 {
+        let _ = pm1.set_pwm0_duty(0);
+    } else {
+        let _ = pm1.enable_pwm0(pmic::FRONTLIGHT_PWM);
+        let _ = pm1.set_pwm0_duty(duty);
+    }
+}
+
+/// RGB LED の緑（M5IOE1 PYG8）を設定する。
+pub fn set_led_green(i2c: &mut SysI2c, on: bool) {
+    let _ = set_push_pull_output(i2c, ioe1::RGB_GREEN, on);
+}
+
+/// RGB LED の青（M5IOE1 PYG9）を設定する。
+pub fn set_led_blue(i2c: &mut SysI2c, on: bool) {
+    let _ = set_push_pull_output(i2c, ioe1::RGB_BLUE, on);
+}
+
+/// RGB LED の赤（M5PM1 `LED_EN`）を設定する。
+pub fn set_led_red(i2c: &mut SysI2c, on: bool) {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    let _ = pm1.set_led(on);
+}
+
 /// 電源レールと M5IOE1 を立ち上げる。受信ファームに必要な最小シーケンス：
 ///
 /// 1. レール整定待ち → M5PM1 存在確認 → M5IOE1 発見。
