@@ -216,10 +216,11 @@ async fn main(_spawner: Spawner) -> ! {
                         pkt.len
                     );
                     if f.is_home() {
-                        // 出発点の設定/更新。座標が変われば新しい行程 → Trail リセット。
+                        // 出発点の設定/更新。座標が変わるか、C6L が HOME 再確定（長押し→
+                        // seq リセット）した直後の seq=0 フレームなら新しい行程 → Trail リセット。
                         let p = f.geopoint();
-                        let changed =
-                            home.is_none_or(|h| nostos_nav::haversine_m(h, p) > 1.0);
+                        let changed = f.seq == 0
+                            || home.is_none_or(|h| nostos_nav::haversine_m(h, p) > 1.0);
                         if changed {
                             trail = Trail::new();
                             view_center = None;

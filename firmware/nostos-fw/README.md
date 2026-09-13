@@ -65,7 +65,9 @@ espflash flash --port COM8 --monitor target\xtensa-esp32s3-none-elf\release\nost
 
 - 下部タブ（タッチ座標デコード）・設定タブ（フロントライト 5 段階）・RGB LED 通知
 - 日本語ラベル（ビットマップフォント埋め込み）
-- C6L 側 HOME 長押し確定＋`FLAG_HOME` 送出（プロトコルは実装済み・C6L UI 未着手）
+
+※ C6L 側 UI（OLED 3 ページ・長押し HOME 確定＋`FLAG_HOME` 送出）は 2026-09-13 実機確認済み
+（`firmware/c6l-beacon`）。HOME フレーム受信で HOME\* → 正式 HOME への置換も E2E 確認済み。
 
 ## 参照
 

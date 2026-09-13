@@ -46,10 +46,13 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
   受信（923.000MHz/BW125/SF9/sync 0x3A 連続 camp）→ NostosFrame デコード → HOME/Trail 管理 →
   ①軌跡マップ（モノクロ・部分更新）＋②帰路ナビ（4 階調・薄墨の来た道＋濃破線の帰路方位）。
   タップで画面切替（暫定）・A/B ズーム・時刻/電池ヘッダ。
-- HOME は `FLAG_HOME`（flags bit1）で C6L から共有する仕様に確定（[docs/UI.md](docs/UI.md)）。
+- **C6L 側 UI も実機動作**（2026-09-13）: OLED 3 ページ（SPI SSD1306 64×48・180°回転）・
+  正面ボタン（PI4IOE5V6408 P0 経由：短押し=ページ/ダブル=任意発信/長押し=HOME 確定）・
+  ブザー鳴らし分け・NeoPixel。HOME 確定 → `FLAG_HOME` 送出 → PaperMono の HOME* が
+  正式 HOME に置換される E2E を確認済み。
+- HOME は `FLAG_HOME`（flags bit1）で C6L から共有（[docs/UI.md](docs/UI.md)）。
   未受信の間は最初の受信点を暫定出発点（HOME* 表記）として帰路表示。
-- 未実装: タッチタブ（座標デコード）・設定タブ・RGB LED・日本語フォント、
-  C6L 側 OLED UI／HOME 長押し確定。
+- 未実装: タッチタブ（座標デコード）・設定タブ・RGB LED 通知（PaperMono 側）・日本語フォント。
 
 ## 開発環境
 
