@@ -57,7 +57,11 @@ pub async fn begin(
     if ioe::set_push_pull_output(i2c, ioe1::EPD_VDD_ENABLE, true).is_err() {
         return None;
     }
-    Timer::after(Duration::from_millis(RST_MS)).await;
+    // コールドスタート時はレールが 0V から立ち上がるため、リセット前に十分待つ。
+    // 10ms ではパネル電源が未安定のままリセットが走り、コントローラが固着して
+    // 以後の全コマンドが無視される（ウォームリブートでのみ成功する 2026-09-13 の
+    // 現象群の原因候補）。
+    Timer::after(Duration::from_millis(500)).await;
     let _ = ioe::set_push_pull_output(i2c, ioe1::EPD_RST, false);
     Timer::after(Duration::from_millis(RST_MS)).await;
     let _ = ioe::set_push_pull_output(i2c, ioe1::EPD_RST, true);
@@ -77,6 +81,17 @@ pub async fn begin(
 
     let _ = epd.cmd(display::SW_RESET, &[]);
     Timer::after(Duration::from_millis(RST_MS)).await;
+    wait_busy_low(busy).await;
+
+    // 工場ドライバ（M5GFX `_after_wake`）準拠のフル初期化＋RAM 自動クリア。
+    // e-ink 更新中の電源変動で固着した SSD1677 は RST/SW_RESET だけでは復帰せず、
+    // 駆動レジスタの再設定と RAM 自動書き込み（0x46/0x47 ← 0xF7・内部エンジン起動）
+    // まで行うことで回復する（2026-09-13。工場 FW が復旧できて当方ができなかった差分）。
+    let _ = epd.init_mono();
+    wait_busy_low(busy).await;
+    let _ = epd.cmd(0x46, &[0xF7]); // BW RAM 自動クリア（白）
+    wait_busy_low(busy).await;
+    let _ = epd.cmd(0x47, &[0xF7]); // RED RAM 自動クリア（白）
     wait_busy_low(busy).await;
 
     Some(Panel {
