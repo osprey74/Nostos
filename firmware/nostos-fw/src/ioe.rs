@@ -203,6 +203,26 @@ pub fn set_led_red(i2c: &mut SysI2c, on: bool) {
 const PM1_REG_I2C_CFG: u8 = 0x09;
 /// M5PM1 のウォッチドッグカウンタ（M5Unified `M5PM1_REG_WDT_CNT`）。
 const PM1_REG_WDT_CNT: u8 = 0x0A;
+/// M5PM1 ボタン設定1（公式 M5PM1 lib `M5PM1_REG_BTN_CFG_1`）。
+/// [7]DL_LOCK [6:5]DBL_DLY [4:3]LONG_DLY [2:1]CLK_DLY [0]SINGLE_RST_DIS。
+const PM1_REG_BTN_CFG_1: u8 = 0x49;
+/// M5PM1 ボタン設定2（公式 M5PM1 lib `M5PM1_REG_BTN_CFG_2`）。[0]DOUBLE_OFF_DIS。
+const PM1_REG_BTN_CFG_2: u8 = 0x4A;
+/// `BTN_CFG_1` で読み書きするビット群: DL_LOCK(7)+LONG_DLY(4:3)+SINGLE_RST_DIS(0)。
+const PM1_BTN_CFG1_MASK: u8 = 0x99;
+/// `LONG_DLY=11`（長押し 4 秒）。
+const PM1_BTN_LONG_DLY_4S: u8 = 0x18;
+/// `SINGLE_RST_DIS`（単クリック・リセット無効・`BTN_CFG_1` bit0）。
+/// 実機で単クリックは完全リセット（USB 再列挙）を起こしパネルを固着させたため無効化。
+const PM1_BTN_SINGLE_RST_DIS: u8 = 1 << 0;
+/// `DOUBLE_OFF_DIS`（ダブルクリック電源オフ無効・`BTN_CFG_2` bit0）。
+const PM1_BTN_DOUBLE_OFF_DIS: u8 = 1 << 0;
+/// M5PM1 ボタン割り込み状態（`M5PM1_REG_IRQ_STATUS3`）。[2]ダブル [1]ウェイク [0]シングル。
+const PM1_REG_IRQ_STATUS3: u8 = 0x42;
+/// M5PM1 ボタン割り込みマスク（`M5PM1_REG_IRQ_MASK3`）。bit=1 でマスク（禁止）。
+const PM1_REG_IRQ_MASK3: u8 = 0x45;
+/// ボタン割り込み全ビット（[2:0]）。
+const PM1_BTN_IRQ_ALL: u8 = 0x07;
 /// `PWR_CFG` bit1: 5V DCDC 有効（公式 M5PM1 lib `M5PM1_PWR_CFG_DCDC_EN`）。
 /// バッテリ駆動時の表示系（EPD/フロントライト）の電源。VIN ありでは外部 5V が
 /// 代替するため、未設定でも USB 接続時は症状が出ない。
@@ -257,6 +277,49 @@ pub fn hold_power(i2c: &mut SysI2c) -> bool {
     a && b && c && d
 }
 
+/// 電源ボタンの破壊的アクションを PM1 側で無効化し、誤操作による電源断・リセット
+/// （→コールドブートでのパネル固着）を防ぐ。
+///
+/// - **SINGLE_RST_DIS=1**: 単クリックのリセットを無効化。実機検証で単クリックは完全リセット
+///   （USB 再列挙を伴う）を起こしパネルを固着させたため封じる。
+/// - **DOUBLE_OFF_DIS=1**: ダブルクリックの電源オフを無効化＝誤操作での電源断→コールド固着を封じる。
+/// - **LONG_DLY=11（4 秒）**: 長押し判定を 1→4 秒に延長し、うっかり長押しを防ぐ。
+/// - **DL_LOCK=0（据え置き）**: 4 秒長押し→download mode は温存（実質不要だが害なし）。
+///
+/// 復旧はボタン非依存の espflash（USB-Serial-JTAG）で常に可能（本日実証済み）。意図的な
+/// 電源オフは設定タブ（タッチ長押し→[`shutdown`]）に残る。バス整定後に呼ぶこと。
+pub fn configure_power_button(i2c: &mut SysI2c) -> bool {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    // read-modify-write。読み出し失敗時は書かない（化けた値で他ビットを壊さない）。
+    let mut ok = true;
+    let mut cfg1_v = 0xFFu8;
+    let mut cfg2_v = 0xFFu8;
+    if let Ok(cfg1) = pm1.read_at(PM1_REG_BTN_CFG_1) {
+        // DL_LOCK(7)=0・LONG_DLY(4:3)=11・SINGLE_RST_DIS(0)=1 に整え、他ビットは保持。
+        cfg1_v = (cfg1 & !PM1_BTN_CFG1_MASK) | PM1_BTN_LONG_DLY_4S | PM1_BTN_SINGLE_RST_DIS;
+        ok &= pm1.write_at(PM1_REG_BTN_CFG_1, cfg1_v).is_ok();
+    } else {
+        ok = false;
+    }
+    if let Ok(cfg2) = pm1.read_at(PM1_REG_BTN_CFG_2) {
+        cfg2_v = cfg2 | PM1_BTN_DOUBLE_OFF_DIS;
+        ok &= pm1.write_at(PM1_REG_BTN_CFG_2, cfg2_v).is_ok();
+    } else {
+        ok = false;
+    }
+    // ボタン割り込みをマスクし保留状態をクリアする。アクションは無効化済みで割り込みも
+    // 不要。未処理割り込みが LED を点滅させ続ける副作用（実機で確認）を止める。
+    let _ = pm1.write_at(PM1_REG_IRQ_MASK3, PM1_BTN_IRQ_ALL);
+    let _ = pm1.write_at(PM1_REG_IRQ_STATUS3, 0x00);
+    esp_println::println!(
+        "nostos-fw: pm1 btn_cfg1=0x{:02x} btn_cfg2=0x{:02x} (double-off dis, long=4s) ok={}",
+        cfg1_v,
+        cfg2_v,
+        ok as u8
+    );
+    ok
+}
+
 /// M5PM1 にシャットダウンを指示する（バッテリ駆動時は電源断。USB 給電中は再起動相当）。
 pub fn shutdown(i2c: &mut SysI2c) {
     let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
@@ -279,6 +342,10 @@ pub async fn bring_up(i2c: &mut SysI2c) -> Option<u8> {
 
     let held = hold_power(i2c);
     esp_println::println!("nostos-fw: pm1 power hold {}", if held { "ok" } else { "FAILED" });
+
+    // 電源ボタンの誤操作（単クリック・リセット / ダブルクリック電源オフ）を無効化し、
+    // 固着の引き金を封じる。復旧は espflash（USB）でボタン非依存に可能。
+    let _ = configure_power_button(i2c);
 
     let pm1 = probe_read(i2c, addresses::M5PM1, pmic::DEVICE_ID);
     let ioe_addr = begin_ioe(i2c).await;
