@@ -72,10 +72,18 @@ BSP（`m5stack-papermono-lite` / `m5stack-papermono`）は `g:\dev\papermono-rs`
     HIGH と強制サイクルしても、固着したパネルは回復しなかった。io3 は 3.3V ロジック電源
     のみで、固着状態は**高圧チャージポンプ/5V 側**にあると推測。工場の電源ボタン回復が
     効くのは PM1 が **5V DCDC を含む全レール**を落とすから（io3 単独では不十分）。
+  - ❌ **明示 `_power_on`（0x22=0xC0→0x20→BUSY 待ち）説も否定**: init 後に工場相当の
+    アナログ電源投入を独立ステップで挿入したが、真コールドブートで依然固着（ビープは鳴る
+    ＝ESP 起動・画面固着・赤 LED）。効果なしのため revert 済み。
+  - ❌ **5V/PM1 レール説も否定（M5Unified ソース確認）**: `Power_Class::begin()` の PaperMono
+    ブロック（m5unified `Power_Class.cpp:528`）は PM1 のウェイク/IRQ クリア・電源ボタン
+    (PM1 GPIO0)/IRQ(GPIO1)・IOE1 G14(SD電源)・IP2315 隔離のみ。**`setExtOutput`/`setBoostEnable`
+    (5V BOOST) は呼ばない**。LDO/DCDC は PM1 起動時に自動有効。当方は既に同等＝5V/BOOST は無関係。
   - **当面の運用は「電源を切らない」**（USB／モバイルバッテリで連続給電。e-ink なので低消費）。
-  - **次に精査すべき差分**: `M5.begin()`（M5Unified ボード電源初期化）の **5V レール・PM1
-    設定**、M5GFX の IOE1 ピン設定順序（io3 HIGH→io5/io6 同時リセット LOW 8ms→HIGH 2ms）、
-    `_power_on()` の `0x22=0xC0`（クロック＋アナログ電源投入）タイミング。
+  - **残る本命方向（次の大工事）**: 工場 PaperMono は M5GFX `Panel_SSD1677_4Gray` で**カスタム
+    LUT(0x32)＋明示駆動電圧（VGH/VSH/VSL/VCOM を 0x03/0x04/0x2C）**を書く。当方は built-in OTP
+    波形（OTP 内蔵電圧）。冷えたパネルで OTP 内蔵電圧では駆動が立たない疑い。→ **M5GFX 駆動
+    方式の移植**が本筋（panel.rs 実質書き換え＋反復コールド試験を要する）。
   - なお booster 0x40・io3 コールドサイクルは**工場値/正しい順序への是正として有効**なので
     コミット済み（papermono-rs `3bcd965` / Nostos `fae17fc`）。固着の主因ではなかっただけ。
 - **固着時の復旧手順**（唯一の実績ある方法）:
