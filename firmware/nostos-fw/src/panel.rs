@@ -54,6 +54,17 @@ pub async fn begin(
     dc: esp_hal::gpio::AnyPin<'static>,
     busy: &Input<'static>,
 ) -> Option<Panel> {
+    // 【固着自己回復・2026-09-14】EPD_VDD レールを一度 LOW に落として放電させ、
+    // コールド状態から立ち上げ直す。工場は電源ボタン再起動で PM1 が IOE1 ごと失電させ
+    // EPD_EN(io3) を LOW にするため固着が解けるが、espflash のウォームリセットでは
+    // IOE1 給電が維持され EPD_EN が HIGH のまま残り、固着したコントローラ状態が
+    // クリアされない（＝工場イメージ起動でだけ回復する現象の正体）。ここで明示的に
+    // レールをサイクルし、毎起動を真のコールド初期化にする。放電中は RST を LOW 保持。
+    let _ = ioe::set_push_pull_output(i2c, ioe1::EPD_RST, false);
+    if ioe::set_push_pull_output(i2c, ioe1::EPD_VDD_ENABLE, false).is_err() {
+        return None;
+    }
+    Timer::after(Duration::from_millis(300)).await; // レール放電待ち
     if ioe::set_push_pull_output(i2c, ioe1::EPD_VDD_ENABLE, true).is_err() {
         return None;
     }
