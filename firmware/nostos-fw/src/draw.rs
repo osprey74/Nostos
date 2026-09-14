@@ -45,6 +45,9 @@ pub const TAB_Y0: i32 = 760;
 /// 設定画面「自動消灯」行のタップ判定 y 範囲（ページ座標）。
 pub const SETTINGS_AUTOOFF_Y: (i32, i32) = (236, 296);
 
+/// 設定画面「再起動（ウォーム・SD 再初期化）」行のタップ判定 y 範囲（ページ座標）。
+pub const SETTINGS_RESET_Y: (i32, i32) = (498, 560);
+
 /// グリッド間隔 [px]（スケールバーと連動）。
 const GRID_PX: i32 = 80;
 
@@ -1091,6 +1094,28 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
         let _ = Text::new(en, Point::new(160, y + 13), mid).draw(&mut ink);
     }
 
+    // --- 再起動（ウォーム・SD 再初期化。行タップで実行）---
+    // 電源ボタンは固着を起こすため、SD 挿入後の再初期化などはこのソフトリセットで行う。
+    line(bw, red, 8, SETTINGS_RESET_Y.0, PAGE_W - 8, SETTINGS_RESET_Y.0);
+    {
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::new("REBOOT", Point::new(16, SETTINGS_RESET_Y.0 + 26), big).draw(&mut ink);
+        let _ = Text::with_alignment(
+            "WARM",
+            Point::new(PAGE_W - 20, SETTINGS_RESET_Y.0 + 26),
+            big,
+            Alignment::Right,
+        )
+        .draw(&mut ink);
+        let _ = Text::new(
+            "(tap row: warm reset / SD re-init)",
+            Point::new(16, SETTINGS_RESET_Y.0 + 46),
+            mid,
+        )
+        .draw(&mut ink);
+    }
+    line(bw, red, 8, SETTINGS_RESET_Y.1, PAGE_W - 8, SETTINGS_RESET_Y.1);
+
     // --- 電源状態 ---
     {
         let mut l = FmtBuf::<48>::new();
@@ -1111,8 +1136,8 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
             }
         }
         let mut ink = Ink::black(bw, red);
-        let _ = Text::new(l.as_str(), Point::new(16, 560), mid).draw(&mut ink);
-        let _ = Text::new("hold screen 1s = POWER OFF", Point::new(16, 600), mid).draw(&mut ink);
+        let _ = Text::new(l.as_str(), Point::new(16, 588), mid).draw(&mut ink);
+        let _ = Text::new("hold screen 1s = POWER OFF", Point::new(16, 620), mid).draw(&mut ink);
         let _ = Text::new(
             concat!("nostos-fw v", env!("CARGO_PKG_VERSION")),
             Point::new(16, MAP_Y1 + 24),

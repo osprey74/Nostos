@@ -478,6 +478,16 @@ async fn main(_spawner: Spawner) -> ! {
                         auto_off = !auto_off;
                         println!("nostos-fw: auto_off -> {}", auto_off as u8);
                         redraw = true;
+                    } else if screen == Screen::Settings
+                        && touch_last.1 >= draw::SETTINGS_RESET_Y.0
+                        && touch_last.1 < draw::SETTINGS_RESET_Y.1
+                    {
+                        // ウォームリセット（ソフトリセット）。電源レール保持のまま FW を
+                        // 再実行＝パネル固着なしで再起動し、microSD を再初期化する。
+                        // 電源ボタン（→固着）や PC 無しで SD 挿入後の再初期化ができる。
+                        println!("nostos-fw: WARM RESET (software_reset / SD re-init)");
+                        Timer::after(Duration::from_millis(80)).await;
+                        esp_hal::system::software_reset();
                     }
                 }
             }
