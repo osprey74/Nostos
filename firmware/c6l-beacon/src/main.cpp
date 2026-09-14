@@ -228,6 +228,24 @@ static void led_task(bool fix) {
   led.show();
 }
 
+// ---- モバイルバッテリ自動オフ対策（キープアライブ） ----
+// Nostos は LoRa 間欠＋GPS＋OLED のみで低消費のため、USB モバイルバッテリが「無負荷」と
+// 判定して自動オフする（Meshtastic は BLE/WiFi 常時稼働で電流を引くため落ちなかった）。
+// 数秒ごとに NeoPixel を白で短時間点灯して電流パルスを出し、バッテリのオフタイマをリセット
+// する。効かない場合は間隔短縮/パルス延長/輝度で調整（バッテリのしきい値・検出方式次第）。
+#define KEEPALIVE_INTERVAL_MS 5000  // パルス間隔（バッテリのオフ猶予より短く）
+#define KEEPALIVE_PULSE_MS    400   // パルス長
+#define KEEPALIVE_LEVEL       255   // 白の輝度（電流最大化）
+static void keepalive_task() {
+  static uint32_t next_ms = 0;
+  uint32_t now = millis();
+  if ((int32_t)(now - next_ms) < 0) return;
+  // ステータスイベント表示中は邪魔しない（終わってから次サイクルで出す）。
+  if (led_off_ms && (int32_t)(now - led_off_ms) < 0) return;
+  next_ms = now + KEEPALIVE_INTERVAL_MS;
+  led_event(KEEPALIVE_LEVEL, KEEPALIVE_LEVEL, KEEPALIVE_LEVEL, KEEPALIVE_PULSE_MS); // 白パルス
+}
+
 // LBT: 送信前エネルギー検出（RSSI）キャリアセンス。空きなら true。
 static bool lbt_clear() {
   // ARIB STD-T108 §3.4.2 エネルギー検出: RX 中に GetRssiInst で瞬時チャネル RSSI を読む。
@@ -549,6 +567,7 @@ void loop() {
   }
 
   // ---- 表示・通知の定期更新 ----
+  keepalive_task();   // USB モバイルバッテリの自動オフ対策（電流パルス）。led_task より先に。
   led_task(fix);
   static uint32_t last_oled_ms = 0;
   if (page_cycle || home_confirm || now - last_oled_ms >= 500) {
