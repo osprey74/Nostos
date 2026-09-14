@@ -354,6 +354,9 @@ pub async fn bring_up(i2c: &mut SysI2c) -> Option<u8> {
         let _ = set_push_pull_output(i2c, ioe1::IP2315_I2C_GATE, false);
         let _ = set_push_pull_output(i2c, ioe1::PDM_VDD_ENABLE, false);
         let _ = set_push_pull_output(i2c, ioe1::EPD_VDD_ENABLE, true);
+        // microSD 電源（IOE1 PYG14）を投入。CSV ロガー用（sdlog）。
+        // 使用前に高インピーダンス解除＝出力駆動が必要（set_push_pull_output が M=1 を書く）。
+        let _ = set_push_pull_output(i2c, ioe1::MICROSD_ENABLE, true);
 
         // FT6336G タッチを電源サイクルして起動（touch_bus と同シーケンス）。
         // 現状は座標を読まず TOUCH_INT(GPIO4) のタップ検出（画面切替）のみに使う。

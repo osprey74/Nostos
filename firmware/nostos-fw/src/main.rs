@@ -28,6 +28,7 @@ mod jpfont;
 mod led;
 mod lora;
 mod panel;
+mod sdlog;
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
@@ -177,6 +178,20 @@ async fn main(_spawner: Spawner) -> ! {
         println!("nostos-fw: rx camp 923.000MHz BW125 SF9 sync 0x3A");
     }
 
+    // microSD CSV ロガー（SDHOST 1bit: CLK=GPIO13 / CMD=GPIO12 / DAT0=GPIO11。
+    // SD 電源=IOE1 PYG14 は bring_up で投入済み）。カード無しでも受信は継続する。
+    let mut sdlog = sdlog::SdLogger::init(
+        peripherals.SDHOST,
+        peripherals.GPIO13,
+        peripherals.GPIO12,
+        peripherals.GPIO11,
+    )
+    .await;
+    println!(
+        "nostos-fw: sdlog {}",
+        if sdlog.is_some() { "card ok" } else { "none/fail" }
+    );
+
     // アプリ状態。
     let bw = BW_PLANE.take();
     let red = RED_PLANE.take();
@@ -304,6 +319,27 @@ async fn main(_spawner: Spawner) -> ! {
                     });
                     last_rx_at = Some(Instant::now());
                     redraw = true;
+
+                    // microSD へ CSV 追記（time_unix,seq,fix,home,lat_e7,lon_e7,rssi,snr）。
+                    if let Some(logger) = sdlog.as_mut() {
+                        use core::fmt::Write as _;
+                        let mut lb = LineBuf::new();
+                        let _ = write!(
+                            lb,
+                            "{},{},{},{},{},{},{},{}\n",
+                            f.time_unix,
+                            f.seq,
+                            f.has_fix() as u8,
+                            f.is_home() as u8,
+                            f.lat_e7,
+                            f.lon_e7,
+                            pkt.rssi,
+                            pkt.snr
+                        );
+                        if !logger.append(lb.as_bytes()).await {
+                            println!("nostos-rx: sdlog append failed");
+                        }
+                    }
                 }
                 Err(e) => {
                     let n = pkt.len.min(8);
@@ -506,6 +542,38 @@ async fn main(_spawner: Spawner) -> ! {
             .await;
             last_render_at = Instant::now();
         }
+    }
+}
+
+/// SD ログ 1 行を組み立てる固定長バッファ（`core::fmt::Write` 実装・no-std 用）。
+struct LineBuf {
+    buf: [u8; 96],
+    len: usize,
+}
+
+impl LineBuf {
+    fn new() -> Self {
+        Self {
+            buf: [0; 96],
+            len: 0,
+        }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl core::fmt::Write for LineBuf {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let b = s.as_bytes();
+        let end = self.len + b.len();
+        if end > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(b);
+        self.len = end;
+        Ok(())
     }
 }
 

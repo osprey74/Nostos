@@ -129,6 +129,21 @@ BSP（`m5stack-papermono-lite` / `m5stack-papermono`）は `g:\dev\papermono-rs`
 タブ・設定画面のラベルは 16×16 の 1bpp グリフ（`src/jpfont.rs`）。
 文字の追加は `tools/gen_jpfont.py` の `CHARS` に追記して再生成（BIZ UDゴシックから変換）。
 
+## microSD CSV ロガー（2026-09-14 実機確認）
+
+受信した NostosFrame を **microSD に CSV 追記**するオフラインロガー。実験後に SD を抜いて
+PC で回収できる（実 GPS フィールドテスト用）。
+
+- **ハード**: SDHOST ペリフェラル（SPI2 パネル / SPI3 LoRa とは別）を GPIO マトリクスで
+  **1bit 配線**（CLK=GPIO13 / CMD=GPIO12 / DAT0=GPIO11）。SD 電源=IOE1 PYG14（`bring_up` で投入）
+- **スタック**: `sdio`（SD カード初期化）＋ `embedded-fatfs`（FAT32・async）＋ `embedded-partitions`
+- **ファイル**: `NOSTOS.CSV`（再起動をまたいで追記・追記ごとに flush＋unmount）
+- **形式**: `time_unix,seq,fix,home,lat_e7,lon_e7,rssi,snr`（緯度経度は 1e7 整数＝PC 側で ÷1e7）
+- **異常時**: カード無し/初期化失敗でも受信は継続（起動ログ `sdlog card ok` / `none/fail`、
+  追記失敗時のみ `nostos-rx: sdlog append failed`）
+- 実装: [`src/sdlog.rs`]。カードは要 FAT32 フォーマット。抜くのはフレーム受信の**合間**（カード
+  アイドル時）に。抜いた後にロギング再開するにはカード再挿入＋再起動（SD 初期化は起動時 1 回）。
+
 ## ビルド / フラッシュ（Windows）
 
 ```powershell
