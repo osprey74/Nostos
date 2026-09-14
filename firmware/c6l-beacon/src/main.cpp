@@ -360,7 +360,10 @@ void setup() {
   // 長時間運用でビーコンごとフリーズし得る（2026-09-13 実測: 数十分で送信停止）。
   // 送信タイムアウト 0 で「捨てて続行」させる。
   Serial.setTxTimeoutMs(0);
-  Serial1.begin(9600, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
+  // GPS UART は 115200bps。M5Stack GPS Unit v1.1(AT6558) の既定は 9600 だが、Meshtastic が
+  // 115200 に設定した値がモジュール内に残存しているため 115200 で読む（2026-09-14 実機確認・
+  // 9600 だと文字化け＝全バイト不正で fix 不能だった）。将来モジュールを工場既定へ戻すなら 9600。
+  Serial1.begin(115200, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
 
   // 内部 I2C（PI4IOE5V6408）。正面ボタンはこのエキスパンダの P0。
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 100000);
@@ -404,6 +407,17 @@ void loop() {
   bool page_cycle = false, manual = false, home_confirm = false;
 
   uint32_t now = millis();
+  // GPS 診断（USB シリアル・2s 周期）: chars=モジュールが送ってきた総バイト（0 なら UART
+  // 無通信＝未接続/未給電/配線/baud）、sats=捕捉衛星数、csumErr=NMEA チェックサム失敗
+  // （baud ずれ/ノイズ）。フィールドで GPS がフィックスしない時の切り分け用（USB 未接続時は無害）。
+  static uint32_t last_gpsdbg_ms = 0;
+  if (now - last_gpsdbg_ms >= 2000) {
+    last_gpsdbg_ms = now;
+    Serial.printf("nostos-beacon: gps chars=%lu sats=%d withfix=%lu csumErr=%lu valid=%d\n",
+                  (unsigned long)gps.charsProcessed(), (int)gps.satellites.value(),
+                  (unsigned long)gps.sentencesWithFix(), (unsigned long)gps.failedChecksum(),
+                  gps.location.isValid() ? 1 : 0);
+  }
   // ボタンは I2C 越しのため 20ms 間隔でポーリング（デバウンス 30ms より十分細かい）。
   static uint32_t last_btn_poll_ms = 0;
   static bool raw_cache = false;
