@@ -1058,11 +1058,11 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
         let _ = Text::with_alignment(s, Point::new(PAGE_W - 20, 116), big, Alignment::Right)
             .draw(&mut ink);
     }
-    // 5 セグメントのバー（塗り＝現在レベル）。
-    for i in 0..5i32 {
-        let x0 = 16 + i * 88;
+    // 4 セグメントのバー（段階 1〜4=MAX を 1 つずつ。塗り＝現在レベル、OFF は全て白）。
+    for i in 0..4i32 {
+        let x0 = 16 + i * 112;
         let y0 = 132;
-        let (x1, y1) = (x0 + 76, y0 + 28);
+        let (x1, y1) = (x0 + 100, y0 + 28);
         line(bw, red, x0, y0, x1, y0);
         line(bw, red, x0, y1, x1, y1);
         line(bw, red, x0, y0, x0, y1);

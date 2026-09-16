@@ -277,6 +277,31 @@ pub fn read_frontlight_duty(i2c: &mut SysI2c) -> Option<u16> {
     Some((u16::from(hc & 0x0F) << 8) | u16::from(lo))
 }
 
+/// PM1 RTC RAM（0xA0〜・32 バイト・電池で保持）に置く UI 設定の先頭アドレスとマジック。
+/// レイアウト: [0xA0]=マジック 0x5A / [0xA1]=明るさ段階 0..4 / [0xA2]=自動消灯 (0/1)。
+const PM1_RTC_RAM_UI: u8 = 0xA0;
+const PM1_UI_MAGIC: u8 = 0x5A;
+
+/// UI 設定（明るさ段階・自動消灯）を PM1 RTC RAM に保存する。シャットダウン／リブートをまたいで
+/// 「選んだ段階」を復元するため（PWM デューティの読み戻しは自動消灯中だと 0 になり使えない）。
+pub fn save_ui_settings(i2c: &mut SysI2c, brightness_idx: u8, auto_off: bool) {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    let _ = pm1.write_at(PM1_RTC_RAM_UI, PM1_UI_MAGIC);
+    let _ = pm1.write_at(PM1_RTC_RAM_UI + 1, brightness_idx.min(4));
+    let _ = pm1.write_at(PM1_RTC_RAM_UI + 2, auto_off as u8);
+}
+
+/// PM1 RTC RAM から UI 設定を読む。マジック不一致（初回・工場ファーム後）は `None`。
+pub fn load_ui_settings(i2c: &mut SysI2c) -> Option<(u8, bool)> {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    if pm1.read_at(PM1_RTC_RAM_UI).ok()? != PM1_UI_MAGIC {
+        return None;
+    }
+    let idx = pm1.read_at(PM1_RTC_RAM_UI + 1).ok()?.min(4);
+    let auto_off = pm1.read_at(PM1_RTC_RAM_UI + 2).ok()? != 0;
+    Some((idx, auto_off))
+}
+
 /// フロントライトの PWM デューティを設定する（0 = 消灯。touch_bus `apply_lamp` と同手順）。
 pub fn set_frontlight(i2c: &mut SysI2c, duty: u16) {
     let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);

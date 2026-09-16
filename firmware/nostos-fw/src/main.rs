@@ -100,6 +100,10 @@ fn brightness_idx_from_duty(duty: u16) -> usize {
         .unwrap_or(0)
 }
 
+/// 明るさ変更後、設定画面を描き直すまでの猶予 [ms]。ライト自体は即時に変わるので、
+/// ボタン連打中は描き直さず、操作が止まってから 1 回だけ部分更新する（描画中の取りこぼし防止）。
+const BRIGHTNESS_REDRAW_DELAY_MS: u64 = 600;
+
 /// 自動消灯までの無操作時間 [秒]。
 const AUTO_OFF_SECS: u64 = 30;
 
@@ -232,13 +236,27 @@ async fn main(_spawner: Spawner) -> ! {
     let mut touch_started_at = Instant::now();
     let mut touch_idle: u8 = 0;
     // 設定・電源・LED 状態。
-    // PM1 はバッテリで常時生存し前回の PWM デューティを保持するため、リセット後も
-    // フロントライトは前回の明るさで点いている。UI の段階表示をそれに合わせる。
-    let mut brightness_idx: usize = ioe::read_frontlight_duty(&mut i2c)
-        .map(brightness_idx_from_duty)
-        .unwrap_or(0);
-    println!("nostos-fw: frontlight idx={} (from pm1)", brightness_idx);
-    let mut auto_off = true;
+    // UI 設定（明るさ段階・自動消灯）は PM1 RTC RAM（電池で保持）から復元する。
+    // 未保存なら PM1 の PWM デューティ読み戻し（自動消灯中は 0 になる）で代用。
+    // PM1 シャットダウン→電源ボタン起動では PWM 出力が止まっているため、段階を再適用して点灯する。
+    let (mut brightness_idx, mut auto_off): (usize, bool) = match ioe::load_ui_settings(&mut i2c) {
+        Some((idx, ao)) => (idx as usize, ao),
+        None => (
+            ioe::read_frontlight_duty(&mut i2c)
+                .map(brightness_idx_from_duty)
+                .unwrap_or(0),
+            true,
+        ),
+    };
+    println!(
+        "nostos-fw: ui settings brightness={} auto_off={} (pm1 rtc ram)",
+        brightness_idx, auto_off as u8
+    );
+    if brightness_idx > 0 {
+        ioe::set_frontlight(&mut i2c, brightness_duty(brightness_idx));
+    }
+    // 明るさ変更の遅延描き直し（None = 予約なし）。
+    let mut brightness_redraw_at: Option<Instant> = None;
     let mut light_dimmed = false; // 自動消灯で一時 OFF 中
     let mut last_input_at = Instant::now();
     let mut vbat_cache = ioe::read_vbat_mv(&mut i2c);
@@ -462,7 +480,9 @@ async fn main(_spawner: Spawner) -> ! {
                 if brightness_idx < 4 {
                     brightness_idx += 1;
                     ioe::set_frontlight(&mut i2c, brightness_duty(brightness_idx));
-                    redraw = true;
+                    ioe::save_ui_settings(&mut i2c, brightness_idx as u8, auto_off);
+                    brightness_redraw_at =
+                        Some(Instant::now() + Duration::from_millis(BRIGHTNESS_REDRAW_DELAY_MS));
                 }
             } else if scale_idx > 0 {
                 scale_idx -= 1;
@@ -475,7 +495,9 @@ async fn main(_spawner: Spawner) -> ! {
                 if brightness_idx > 0 {
                     brightness_idx -= 1;
                     ioe::set_frontlight(&mut i2c, brightness_duty(brightness_idx));
-                    redraw = true;
+                    ioe::save_ui_settings(&mut i2c, brightness_idx as u8, auto_off);
+                    brightness_redraw_at =
+                        Some(Instant::now() + Duration::from_millis(BRIGHTNESS_REDRAW_DELAY_MS));
                 }
             } else if scale_idx + 1 < draw::SCALE_M_PER_PX.len() {
                 scale_idx += 1;
@@ -577,6 +599,7 @@ async fn main(_spawner: Spawner) -> ! {
                         && touch_last.1 < draw::SETTINGS_AUTOOFF_Y.1
                     {
                         auto_off = !auto_off;
+                        ioe::save_ui_settings(&mut i2c, brightness_idx as u8, auto_off);
                         println!("nostos-fw: auto_off -> {}", auto_off as u8);
                         redraw = true;
                     } else if screen == Screen::Settings
@@ -653,6 +676,14 @@ async fn main(_spawner: Spawner) -> ! {
                 stale_secs: STALE_REDRAW_SECS,
             },
         );
+
+        // --- 明るさ変更の遅延描き直し（ボタン操作が止まってから 1 回）---
+        if brightness_redraw_at.is_some_and(|t| Instant::now() >= t) {
+            brightness_redraw_at = None;
+            if screen == Screen::Settings {
+                redraw = true;
+            }
+        }
 
         // --- 受信が途絶えても AGE 表示を進める（再描画は控えめに）---
         if !redraw
