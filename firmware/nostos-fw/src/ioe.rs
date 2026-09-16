@@ -264,6 +264,19 @@ pub fn read_pm1_power_regs(i2c: &mut SysI2c) -> (Option<u8>, Option<u8>) {
     (src, cfg)
 }
 
+/// フロントライトの現在の PWM デューティを PM1 から読み戻す（0 = 消灯）。PM1 はバッテリで常時
+/// 生存し前回のデューティを保持するため、起動時に UI の段階表示と実際の点灯を一致させるのに使う。
+pub fn read_frontlight_duty(i2c: &mut SysI2c) -> Option<u16> {
+    use m5stack_papermono_lite::m5pm1::{PWM0_EN, PWM0_HC, PWM0_L};
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    let lo = pm1.read_at(PWM0_L).ok()?;
+    let hc = pm1.read_at(PWM0_HC).ok()?;
+    if hc & PWM0_EN == 0 {
+        return Some(0);
+    }
+    Some((u16::from(hc & 0x0F) << 8) | u16::from(lo))
+}
+
 /// フロントライトの PWM デューティを設定する（0 = 消灯。touch_bus `apply_lamp` と同手順）。
 pub fn set_frontlight(i2c: &mut SysI2c, duty: u16) {
     let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);

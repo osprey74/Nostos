@@ -116,7 +116,15 @@ EPD_VDD(io3) の LOW→HIGH サイクル（ピンが駒動されていないの�
 ## 日本語表示
 
 タブ・設定画面のラベルは 16×16 の 1bpp グリフ（`src/jpfont.rs`）。
-文字の追加は `tools/gen_jpfont.py` の `CHARS` に追記して再生成（BIZ UDゴシックから変換）。
+文字の追加は `tools/gen_jpfont.py` の `CHARS` に追記して再生成（**BIZ UDゴシック Bold** から変換。
+e-ink では 1px の線が灰色に見えるため 2026-09-16 に太字へ変更。英数字の中サイズも同寸の
+`FONT_9X15_BOLD`）。
+
+## フロントライトの段階表示
+
+PM1 はバッテリで常時生存し前回の PWM デューティを保持するため、リブート後もライトは前回の明るさで
+点いている。起動時に `ioe::read_frontlight_duty()` で読み戻し、最も近い段階（OFF/1/2/3/MAX）を UI に
+反映する（起動ログ `frontlight idx=N (from pm1)`）。
 
 ## microSD CSV ロガー（2026-09-14 実機確認）
 

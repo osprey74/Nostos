@@ -90,6 +90,16 @@ fn brightness_duty(idx: usize) -> u16 {
     }
 }
 
+/// PM1 から読み戻したデューティに最も近い輝度段階（[`brightness_duty`] の逆写像）。
+fn brightness_idx_from_duty(duty: u16) -> usize {
+    if duty == 0 {
+        return 0;
+    }
+    (1..=4usize)
+        .min_by_key(|&i| brightness_duty(i).abs_diff(duty))
+        .unwrap_or(0)
+}
+
 /// 自動消灯までの無操作時間 [秒]。
 const AUTO_OFF_SECS: u64 = 30;
 
@@ -222,7 +232,12 @@ async fn main(_spawner: Spawner) -> ! {
     let mut touch_started_at = Instant::now();
     let mut touch_idle: u8 = 0;
     // 設定・電源・LED 状態。
-    let mut brightness_idx: usize = 0; // 0=OFF
+    // PM1 はバッテリで常時生存し前回の PWM デューティを保持するため、リセット後も
+    // フロントライトは前回の明るさで点いている。UI の段階表示をそれに合わせる。
+    let mut brightness_idx: usize = ioe::read_frontlight_duty(&mut i2c)
+        .map(brightness_idx_from_duty)
+        .unwrap_or(0);
+    println!("nostos-fw: frontlight idx={} (from pm1)", brightness_idx);
     let mut auto_off = true;
     let mut light_dimmed = false; // 自動消灯で一時 OFF 中
     let mut last_input_at = Instant::now();

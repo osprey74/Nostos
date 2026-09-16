@@ -15,7 +15,8 @@
 
 use core::fmt::Write as _;
 
-use embedded_graphics::mono_font::iso_8859_1::{FONT_10X20, FONT_9X15};
+// 中サイズ英数字は太字（e-ink では 1px ストロークが灰色に見えるため。同寸なのでレイアウト不変）。
+use embedded_graphics::mono_font::iso_8859_1::{FONT_10X20, FONT_9X15_BOLD};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -569,7 +570,7 @@ fn draw_tabs(bw: &mut [u8], red: &mut [u8], active: usize) {
 /// ヘッダ（NOSTOS＋画面名 / 時刻・電池% / 受信経過＋インジケータ）と区切り線。
 fn draw_header(bw: &mut [u8], red: &mut [u8], st: &Status, screen: &str) {
     let big = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-    let mid = MonoTextStyle::new(&FONT_9X15, BinaryColor::On);
+    let mid = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::On);
     {
         let mut ink = Ink::black(bw, red);
         let _ = Text::new("NOSTOS", Point::new(12, 42), big).draw(&mut ink);
@@ -654,7 +655,7 @@ fn draw_grid_and_north(bw: &mut [u8], red: &mut [u8], grid_tone: u8) {
             set_tone_map(bw, red, nx + dx, ny + dy, display::GRAY_BLACK);
         }
     }
-    let mid = MonoTextStyle::new(&FONT_9X15, BinaryColor::On);
+    let mid = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::On);
     let mut ink = Ink::black(bw, red);
     let _ = Text::with_alignment("N", Point::new(nx, ny + 36), mid, Alignment::Center)
         .draw(&mut ink);
@@ -671,7 +672,7 @@ fn draw_scalebar(bw: &mut [u8], red: &mut [u8], m_per_px: u32) {
     line_map(bw, red, sb_x + GRID_PX, sb_y - 5, sb_x + GRID_PX, sb_y + 6, display::GRAY_BLACK);
     let mut s = FmtBuf::<16>::new();
     write_dist(&mut s, m_per_px * GRID_PX as u32);
-    let mid = MonoTextStyle::new(&FONT_9X15, BinaryColor::On);
+    let mid = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::On);
     let mut ink = Ink::black(bw, red);
     let _ = Text::with_alignment(
         s.as_str(),
@@ -730,7 +731,7 @@ pub fn render_trail<const N: usize>(
     red.fill(0x00);
 
     let big = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-    let mid = MonoTextStyle::new(&FONT_9X15, BinaryColor::On);
+    let mid = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::On);
 
     draw_header(bw, red, st, "TRAIL");
     draw_grid_and_north(bw, red, display::GRAY_BLACK);
@@ -871,7 +872,7 @@ pub fn render_homing<const N: usize>(
     red.fill(0x00);
 
     let big = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-    let mid = MonoTextStyle::new(&FONT_9X15, BinaryColor::On);
+    let mid = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::On);
 
     draw_header(bw, red, st, "HOMING");
     // 4 階調が使えるのでグリッドは薄墨で引く（モックアップの淡い格子に対応）。
@@ -1039,7 +1040,7 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
     red.fill(0x00);
 
     let big = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-    let mid = MonoTextStyle::new(&FONT_9X15, BinaryColor::On);
+    let mid = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::On);
 
     draw_header(bw, red, st, "CONFIG");
 

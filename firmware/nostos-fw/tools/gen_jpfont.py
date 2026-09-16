@@ -1,13 +1,13 @@
 # 日本語グリフ（16×16・1bpp）を Windows フォントから生成し src/jpfont.rs を書き出す。
 #   python tools/gen_jpfont.py
 # 文字を増やしたら CHARS に追記して再実行（生成物はコミットする）。
-# フォント: BIZ UDゴシック（Windows 標準・視認性重視）。
+# フォント: BIZ UDゴシック Bold（Windows 標準・e-ink で線が細く見えないよう太字を使う・2026-09-16）。
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
 CHARS = "軌跡帰路設定明るさ自動消灯凡例受信途絶低電池充電中"
 SIZE = 16
-FONT_PATH = r"C:\Windows\Fonts\BIZ-UDGothicR.ttc"
+FONT_PATH = r"C:\Windows\Fonts\BIZ-UDGothicB.ttc"
 
 out = Path(__file__).resolve().parent.parent / "src" / "jpfont.rs"
 font = ImageFont.truetype(FONT_PATH, SIZE)
