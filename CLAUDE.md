@@ -62,10 +62,10 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
   起動直後に登録どおり駒動されないこと（パネル無電源）。`ioe::set_output_verified()` で IN 読み戻し＋
   MODE 振り直しを行い、電源ボタン全レール断→起動で正常描画を実機確認。波形は無関係だった
   （firmware/nostos-fw/README.md「コールドブート固着」節）。
-- **パネル駆動は M5GFX 方式（Mode 2・lut_fast/lut_fastest・明示電圧）へ移植済み**（`panel.rs` `DRIVE`
-  で OTP 方式と切替可）。全面 329ms／差分 132ms・チラつきなし。黒がやや薄い既知差あり。
-- 残: 実 GPS での屋外フィールドテスト、CardputerZero 版への移植（cardputerzero-apps）、
-  黒濃度の改善（全面更新の epd_quality 化）の要否判断。
+- **パネル駆動は従来の OTP 方式のまま**（`panel.rs` `DRIVE`）。M5GFX 方式（quality/fast/fastest・
+  明示電圧）は固着仮説の検証で移植したが波形は無関係と判明し、黒の薄さ・応答性・残像で不採用
+  （実験用に定数切替で残置）。
+- 残: 実 GPS での屋外フィールドテスト、CardputerZero 版への移植（cardputerzero-apps）。
 
 ## 開発環境
 

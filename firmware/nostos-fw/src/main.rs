@@ -544,6 +544,9 @@ async fn main(_spawner: Spawner) -> ! {
                         {
                             screen = tab;
                             last_toggle_at = Instant::now();
+                            // 受け付けの即時フィードバック（短いクリック音）。全面更新中は
+                            // 画面が変わるまで時間がかかるため、タップが届いたことを音で示す。
+                            beep_blocking(&mut buzzer, &bz_delay, 15);
                             println!(
                                 "nostos-fw: screen -> {}",
                                 match screen {
@@ -821,23 +824,14 @@ async fn render_and_paint(
         sd,
     };
     match screen {
-        Screen::Trail => {
-            draw::render_trail(bw, red, trail, &st);
-            if let Some(p) = panel.as_mut() {
-                p.paint_mono_fast(i2c, bw, red, busy).await;
-            }
-        }
-        Screen::Homing => {
-            draw::render_homing(bw, red, trail, &st);
-            if let Some(p) = panel.as_mut() {
-                p.paint_gray(i2c, bw, red, busy).await;
-            }
-        }
-        Screen::Settings => {
-            draw::render_settings(bw, red, &st);
-            if let Some(p) = panel.as_mut() {
-                p.paint_mono_fast(i2c, bw, red, busy).await;
-            }
-        }
+        Screen::Trail => draw::render_trail(bw, red, trail, &st),
+        Screen::Homing => draw::render_homing(bw, red, trail, &st),
+        Screen::Settings => draw::render_settings(bw, red, &st),
+    }
+    let Some(p) = panel.as_mut() else { return };
+    if screen == Screen::Homing {
+        p.paint_gray(i2c, bw, red, busy).await;
+    } else {
+        p.paint_mono_fast(i2c, bw, red, busy).await;
     }
 }

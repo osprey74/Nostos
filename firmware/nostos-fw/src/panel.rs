@@ -5,13 +5,23 @@
 //! 4 階調（帰路画面・薄墨表現）の両経路を持つ。
 //!
 //! # 駆動方式（[`DRIVE`] で切替・2026-09-16）
-//! - [`Drive::M5gfx`]（既定）: 工場 M5GFX `Panel_SSD1677_4Gray` と同じ **Mode 2 駆動**。
-//!   全面更新は `lut_fast`（48 フレーム・4 階調絶対更新）、モノクロ部分更新は `lut_fastest`
-//!   （差分・白黒）。いずれも **カスタム LUT(0x32)＋明示駆動電圧（VGH 0x03 / VSH1・VSH2・VSL
-//!   0x04 / VCOM 0x2C）**を書いてから `0x22=0xCC`（クロック＋アナログ ON＋Mode 2 表示）で
-//!   起動する。工場 UserDemo は `epd_fast`/`epd_fastest` のみ使用（Mode 1 は未使用）。
-//!   コールドブート固着（OTP 内蔵電圧では冷えたパネルの駆動が立たない疑い）への対策。
-//! - [`Drive::Otp`]: 従来の工場 OTP 波形（0xF8/0x14 モノ・0xFF 部分・0xD7 4 階調）。
+//! - [`Drive::Otp`]（**既定**）: 工場 OTP 波形（0xF8/0x14 モノ全面・0xFF 部分・0xD7 4 階調）。黒が濃く、
+//!   部分更新の残像も少ない。数日の実運用で問題なし。
+//! - [`Drive::M5gfx`]（実験用）: 工場 M5GFX `Panel_SSD1677_4Gray` と同じカスタム LUT 駆動。
+//!   - **モノクロ全面＝`epd_quality`**（Mode 1・`lut_quality`・`0x22=0xC7`・実測 3.4 秒・最も濃い黒）。
+//!     起動時と、差分 [`PARTIALS_BEFORE_FULL`] 回ごとの残像消去にのみ使う
+//!   - **4 階調全面（帰路）＝`epd_fast`**（Mode 2・`lut_fast`・`0x22=0xCC`・実測 0.33 秒）。quality より
+//!     やや薄いが応答性を優先（2026-09-16 実機評価「若干薄いが問題ない」）
+//!   - **モノクロ差分＝`epd_fastest`**（Mode 2・`lut_fastest`・`0x22=0xCC`・実測 0.13 秒）。直前が
+//!     4 階調画像でも M5GFX `_send_transition_planes` と同じ遷移プレーン
+//!     （BW=新, RED=新が白なら old_lsb&old_msb / 黒なら old_lsb|old_msb）で差分更新できるので、
+//!     帰路→軌跡／設定のタブ切替も全面更新なしで済む
+//!
+//!   いずれも **LUT(0x32)＋明示駆動電圧（VGH 0x03 / VSH1・VSH2・VSL 0x04 / VCOM 0x2C）**を書いてから
+//!   Master Activation する。
+//!   コールドブート固着の仮説（OTP 内蔵電圧が原因）検証のために移植したが、真因は IOE1 io3 の
+//!   駒動不良で波形は無関係だった（[`crate::ioe::set_output_verified`]）。差分更新用の旧フレーム
+//!   2 プレーン（96KB）は静的確保のまま。
 //!
 //! # 安全契約（厳守）
 //! 1. **LUT は工場 M5GFX の値をバイト単位でそのまま使う**（独自波形は焼き付きの恐れがあるため
@@ -44,8 +54,10 @@ pub enum Drive {
     M5gfx,
 }
 
-/// 使用する駆動方式。A/B 比較用に定数で切替。
-pub const DRIVE: Drive = Drive::M5gfx;
+/// 使用する駆動方式。**既定は OTP**（2026-09-16 実機評価: 黒が濃く、部分更新も残像が少ない）。
+/// M5GFX 方式はコールドブート固着の仮説検証のために移植したが、真因は IOE1 の io3 駒動不良で
+/// 波形は無関係だった。M5GFX 方式（fast=黒が薄い／quality=3.4 秒／差分=残像）は実験用に残置。
+pub const DRIVE: Drive = Drive::Otp;
 
 /// ハードウェアリセットパルス幅 [ms]。
 const RST_MS: u64 = 10;
@@ -71,10 +83,37 @@ const CMD_WRITE_VCOM: u8 = 0x2C;
 /// 0x22: Mode 2 表示（0x0C）＋クロック・アナログ投入（0xC0）。リセット直後は電源 OFF 状態
 /// なので M5GFX `_activate` と同じく毎回 0xC0 を立てる。
 const CTRL2_MODE2_POWER_ON_DISPLAY: u8 = 0xCC;
+/// 0x22: Mode 1 表示（0x04）＋電源投入（0xC0）＋表示後にアナログ・クロック OFF（0x03）。
+/// M5GFX `_refresh_mode1_absolute` の `_activate(CTRL1_NORMAL, 0x07, powers_down=true)`。
+const CTRL2_MODE1_POWER_CYCLE_DISPLAY: u8 = 0xC7;
 /// 0x22: アナログ OFF＋クロック OFF（M5GFX `setSleep(true)` / `setPowerSave(true)`）。
 const CTRL2_POWER_OFF: u8 = 0x03;
 
-/// M5GFX `lut_fast`: Mode 2・48 フレームの 4 階調絶対更新（工場 `epd_fast`）。
+/// M5GFX `lut_quality`: Mode 1・4 階調絶対更新（工場 `epd_quality`・実測約 4.7 秒）。
+/// 前画像を消す振動プレフィクス（VSL/VSH1 交互）→4 階調テールで目標階調を形成。|VSH1|=|VSL|=16V で
+/// 各グループの正味駆動を揃え、繰り返し更新での画像相関ゴーストを防ぐ（M5GFX コメント）。
+/// RAM グループ（RED<<1 | BW）: 0=白 / 1=薄墨 / 2=濃墨 / 3=黒（lut_fast と同じエンコード）。
+static LUT_QUALITY: [u8; 110] = [
+    0x66, 0x66, 0x00, 0x4A, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00, // white
+    0x66, 0x66, 0x80, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // light
+    0x66, 0x66, 0x88, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // dark
+    0x66, 0x66, 0xA8, 0x44, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, // black
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // VCOM
+    0x05, 0x05, 0x05, 0x05, 0x00, //
+    0x05, 0x05, 0x05, 0x05, 0x01, //
+    0x08, 0x0B, 0x02, 0x03, 0x01, //
+    0x0C, 0x02, 0x07, 0x02, 0x01, //
+    0x01, 0x00, 0x02, 0x00, 0x01, //
+    0x00, 0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, 0x00, //
+    0x00, 0x00, 0x00, 0x00, 0x00, //
+    0x22, 0x22, 0x22, 0x22, 0x22, // frame rate
+    0x17, 0x46, 0xA8, 0x36, 0x30, // VGH, VSH1(+16V), VSH2, VSL(-16V), VCOM(-1.2V)
+];
+
+/// M5GFX `lut_fast`: Mode 2・48 フレームの 4 階調絶対更新（工場 `epd_fast`）。帰路（4 階調）画面用。
 /// 先頭 105 バイトが 0x32、末尾 5 バイトが VGH / VSH1(+15V) / VSH2 / VSL(-15V) / VCOM(-1.2V)。
 /// RAM グループ（RED<<1 | BW）: 0=白 / 1=薄墨 / 2=濃墨 / 3=黒。
 static LUT_FAST: [u8; 110] = [
@@ -120,8 +159,11 @@ static LUT_FASTEST: [u8; 110] = [
     0x17, 0x46, 0xA8, 0x32, 0x30, // VGH, VSH1(+16V), VSH2, VSL(-15V), VCOM(-1.2V)
 ];
 
-/// 差分更新の基準（ガラス上に出ているモノクロ画像の黒マスク・ページ座標 1bpp）。
-static DISPLAYED_PLANE: ConstStaticCell<[u8; display::PLANE_BYTES]> =
+/// 差分更新の基準＝ガラス上の画像（M5GFX `_displayed_buf` 相当・ページ座標 1bpp × 2）。
+/// `lsb = v&1` / `msb = v&2`（v: 0=黒 1=濃墨 2=薄墨 3=白。ビット 1 = 白側）。モノクロ画像なら lsb==msb。
+static DISPLAYED_LSB: ConstStaticCell<[u8; display::PLANE_BYTES]> =
+    ConstStaticCell::new([0; display::PLANE_BYTES]);
+static DISPLAYED_MSB: ConstStaticCell<[u8; display::PLANE_BYTES]> =
     ConstStaticCell::new([0; display::PLANE_BYTES]);
 
 /// e-paper パネルハンドル（部分更新バジェット管理付き）。
@@ -131,9 +173,11 @@ pub struct Panel {
     mono_ready: bool,
     /// 前回フル更新からの部分更新回数。
     partials: u8,
-    /// ガラス上のモノクロ画像（黒=1）。M5GFX 差分更新の旧フレーム。
-    displayed: &'static mut [u8; display::PLANE_BYTES],
-    /// `displayed` がガラス上の画像と一致しているか（4 階調描画後は false）。
+    /// ガラス上の画像（`lsb = v&1`）。M5GFX 差分更新の旧フレーム。
+    disp_lsb: &'static mut [u8; display::PLANE_BYTES],
+    /// ガラス上の画像（`msb = v&2`）。
+    disp_msb: &'static mut [u8; display::PLANE_BYTES],
+    /// `disp_*` がガラス上の画像と一致しているか（起動直後と OTP 経路使用後は false）。
     displayed_valid: bool,
     /// 直近の Master Activation で BUSY が立ち上がったか（None=未描画）。ステータスログ用。
     last_busy_rose: Option<bool>,
@@ -228,7 +272,8 @@ pub async fn begin(
         epd,
         mono_ready: false,
         partials: 0,
-        displayed: DISPLAYED_PLANE.take(),
+        disp_lsb: DISPLAYED_LSB.take(),
+        disp_msb: DISPLAYED_MSB.take(),
         displayed_valid: false,
         last_busy_rose: None,
     })
@@ -316,18 +361,18 @@ impl Panel {
         let _ = self.epd.cmd(CMD_WRITE_VCOM, &[lut[109]]);
     }
 
-    /// Mode 2 で表示更新を起動し完了を待つ（M5GFX `_activate(CTRL1_NORMAL, 0x0C)`＋電源投入）。
+    /// 表示更新を起動し完了を待つ（M5GFX `_activate(CTRL1_NORMAL, ctrl2)`）。`ctrl2` は
+    /// [`CTRL2_MODE1_POWER_CYCLE_DISPLAY`]（全面・quality）か [`CTRL2_MODE2_POWER_ON_DISPLAY`]（差分）。
     /// 診断として BUSY の立ち上がり有無と所要時間をシリアルへ出す（コールドブート固着では
     /// BUSY が上がらない／即戻る＝波形が走っていない、を切り分けるため）。
-    async fn m5_activate(&mut self, what: &str, busy: &Input<'_>) -> bool {
+    async fn m5_activate(&mut self, what: &str, ctrl2: u8, busy: &Input<'_>) -> bool {
         let _ = self.epd.cmd(
             display::DISPLAY_UPDATE_CONTROL_1,
             &[display::DISPLAY_CTRL1_NORMAL],
         );
-        let _ = self.epd.cmd(
-            display::DISPLAY_UPDATE_CONTROL_2,
-            &[CTRL2_MODE2_POWER_ON_DISPLAY],
-        );
+        let _ = self
+            .epd
+            .cmd(display::DISPLAY_UPDATE_CONTROL_2, &[ctrl2]);
         let t0 = Instant::now();
         let _ = self.epd.activate();
         let rose = wait_busy_cycle(busy).await;
@@ -351,15 +396,29 @@ impl Panel {
         self.deep_sleep().await;
     }
 
-    /// `displayed` を現在のモノクロ黒マスクで更新する。
+    /// 旧フレームをモノクロ画像で更新する（白=1 を lsb/msb 両方に）。
     fn m5_remember_mono(&mut self, bw: &[u8], red: &[u8]) {
-        for (i, d) in self.displayed.iter_mut().enumerate() {
-            *d = bw.get(i).copied().unwrap_or(0) | red.get(i).copied().unwrap_or(0);
+        for (i, (l, m)) in self.disp_lsb.iter_mut().zip(self.disp_msb.iter_mut()).enumerate() {
+            let white = !(bw.get(i).copied().unwrap_or(0) | red.get(i).copied().unwrap_or(0));
+            *l = white;
+            *m = white;
         }
         self.displayed_valid = true;
     }
 
-    /// モノクロ全面（Mode 2 絶対更新・`lut_fast`）。黒 → 両 RAM=1（グループ 3）、白 → 0。
+    /// 旧フレームを 4 階調画像で更新する。描画プレーンは `bw = !(v&1)` / `red = !(v&2)`
+    /// （`gray_planes` エンコード＝M5GFX の RAM 反転値）なので、ビット反転して lsb/msb に戻す。
+    fn m5_remember_gray(&mut self, bw: &[u8], red: &[u8]) {
+        for (i, (l, m)) in self.disp_lsb.iter_mut().zip(self.disp_msb.iter_mut()).enumerate() {
+            *l = !bw.get(i).copied().unwrap_or(0);
+            *m = !red.get(i).copied().unwrap_or(0);
+        }
+        self.displayed_valid = true;
+    }
+
+    /// モノクロ全面（Mode 1 絶対更新・`lut_quality`）。黒 → 両 RAM=1（グループ 3）、白 → 0。
+    /// HW リセット直後は RAM フェイスが偶数（既知）なので、M5GFX `_refresh_mode1_absolute` の
+    /// 偶数フェイス経路（BW=lsb / RED=msb・反転）と同じプレーン割当で書く。
     async fn m5_mono_absolute(
         &mut self,
         i2c: &mut SysI2c,
@@ -376,14 +435,18 @@ impl Panel {
             official_bit(bw, x, y) || official_bit(red, x, y)
         })
         .await;
-        self.m5_send_lut(&LUT_FAST);
-        let _ = self.m5_activate("mono_abs", busy).await;
+        self.m5_send_lut(&LUT_QUALITY);
+        let _ = self
+            .m5_activate("mono_abs", CTRL2_MODE1_POWER_CYCLE_DISPLAY, busy)
+            .await;
         self.m5_power_off_sleep(busy).await;
         self.m5_remember_mono(bw, red);
         self.partials = 0;
     }
 
-    /// モノクロ差分（Mode 2・`lut_fastest`）。BW RAM=新（1=白）、RED RAM=旧（1=白）。
+    /// モノクロ差分（Mode 2・`lut_fastest`）。BW RAM=新（1=白）、RED RAM=旧の遷移クラス
+    /// （M5GFX `_send_transition_planes`: 新が白なら `old_lsb & old_msb`、黒なら `old_lsb | old_msb`。
+    /// 旧が中間灰でも目標の白黒端点まで駆動される）。旧が 4 階調画像でも使える。
     async fn m5_mono_fastest(
         &mut self,
         i2c: &mut SysI2c,
@@ -397,19 +460,32 @@ impl Panel {
         })
         .await;
         {
-            let old: &[u8] = &self.displayed[..];
-            // 借用衝突回避のため旧フレームをローカル参照に束ねる（epd と displayed は別フィールド）。
+            // 借用衝突回避のため旧フレームをローカル参照に束ねる（epd と disp_* は別フィールド）。
+            let old_l: &[u8] = &self.disp_lsb[..];
+            let old_m: &[u8] = &self.disp_msb[..];
             let epd = &mut self.epd;
-            write_plane(epd, display::WRITE_RAM_RED, |x, y| !official_bit(old, x, y)).await;
+            write_plane(epd, display::WRITE_RAM_RED, |x, y| {
+                let new_white = !(official_bit(bw, x, y) || official_bit(red, x, y));
+                let (l, m) = (official_bit(old_l, x, y), official_bit(old_m, x, y));
+                if new_white {
+                    l && m
+                } else {
+                    l || m
+                }
+            })
+            .await;
         }
         self.m5_send_lut(&LUT_FASTEST);
-        let _ = self.m5_activate("mono_diff", busy).await;
+        let _ = self
+            .m5_activate("mono_diff", CTRL2_MODE2_POWER_ON_DISPLAY, busy)
+            .await;
         self.m5_power_off_sleep(busy).await;
         self.m5_remember_mono(bw, red);
         self.partials = self.partials.saturating_add(1);
     }
 
-    /// 4 階調全面（Mode 2 絶対更新・`lut_fast`）。プレーンはそのまま両 RAM へ。
+    /// 4 階調全面（Mode 2 絶対更新・`lut_fast`・0.33 秒）。プレーンはそのまま両 RAM へ。
+    /// 描画後は 4 階調画像を差分の旧フレームとして記憶するので、次のモノクロ描画は差分で済む。
     async fn m5_gray_absolute(
         &mut self,
         i2c: &mut SysI2c,
@@ -427,11 +503,13 @@ impl Panel {
         })
         .await;
         self.m5_send_lut(&LUT_FAST);
-        let _ = self.m5_activate("gray_abs", busy).await;
+        let _ = self
+            .m5_activate("gray_abs", CTRL2_MODE2_POWER_ON_DISPLAY, busy)
+            .await;
         self.m5_power_off_sleep(busy).await;
-        // ガラス上は 4 階調画像 → モノクロ差分の基準として使えない。
-        self.displayed_valid = false;
+        self.m5_remember_gray(bw, red);
         self.mono_ready = false;
+        // 4 階調は絶対更新なので残像バジェットは打ち直す（M5GFX も絶対更新で基準を取り直す）。
         self.partials = 0;
     }
 

@@ -47,16 +47,19 @@ BSP（`m5stack-papermono-lite` / `m5stack-papermono`）は `g:\dev\papermono-rs`
 
 ### パネル駆動方式（`src/panel.rs` `DRIVE`・2026-09-16）
 
-- **`Drive::M5gfx`（既定）**: 工場 M5GFX `Panel_SSD1677_4Gray` と同じ **Mode 2** 駆動。全面更新は
-  `lut_fast`（48 フレーム 4 階調絶対更新・実測 329ms）、軌跡の部分更新は `lut_fastest`（白黒差分・
-  実測 132ms・チラつきなし）。毎回 LUT(0x32)＋駆動電圧(0x03/0x04/0x2C) を明示的に書く。LUT は
-  M5GFX からのバイト転記のみ（独自波形は焼き付きリスクのため禁止）。差分更新用に表示中画像 48KB
-  を静的確保（.bss 約 153KB）。
-- **`Drive::Otp`**: 従来の工場 OTP 波形（0xF8/0x14 モノ・0xFF 部分・0xD7 4 階調）。定数で切替可。
-- 既知の差: M5GFX 方式は高速波形のため **黒がやや薄い**（1px フォントの設定画面で目立つ）。
-  濃くする場合は全面更新だけ工場 `epd_quality`（Mode 1・`lut_quality`・約 4.7 秒）へ切替える案がある。
-- 各更新で `nostos-fw: panel m5 <mono_abs|mono_diff|gray_abs> busy_rose=<0|1> took=<ms>` を
-  シリアルへ出す。`busy_rose=0` はコントローラが Master Activation を処理していない＝無電源/固着。
+- **`Drive::Otp`（既定）**: 工場 OTP 波形。モノクロ全面＝`0xF8`（反転同期）→`0x14`、部分更新＝`0xFF`
+  （軌跡の毎分更新・タブ切替。18 回ごとに全面で残像消去）、帰路 4 階調＝`0xD7`。黒が濃く、部分更新の
+  残像も少ない。数日の実運用で問題なし。タブタップ時に短いクリック音で受け付けを通知
+  （`main.rs` の `beep_blocking(…, 15)`）。
+- **`Drive::M5gfx`（実験用・不採用）**: 工場 M5GFX `Panel_SSD1677_4Gray` と同じカスタム LUT 駆動
+  （`lut_quality`/`lut_fast`/`lut_fastest`・LUT 0x32＋駆動電圧 0x03/0x04/0x2C を明示書き込み・
+  Mode 1 `0x22=0xC7`／Mode 2 `0x22=0xCC`）。コールドブート固着の仮説「OTP 内蔵電圧では冷えたパネルが
+  駆動できない」を検証するために移植したが、**真因は IOE1 io3 の駒動不良で波形は無関係**だった。
+  実機評価: fast（0.33 秒）は黒が薄い／quality（3.4 秒）はタップを取りこぼす／fastest 差分（0.13 秒）は
+  残像が残る。タブごとの使い分けやセトル再描画で補う案は複雑さに見合わず撤回。コードは定数切替で
+  残置（差分用の旧フレーム 2 プレーン 96KB も静的確保のまま）。
+- 各更新で `nostos-fw: panel m5 ... busy_rose=<0|1> took=<ms>`（M5GFX 経路のみ）を出す。`busy_rose=0`
+  はコントローラが Master Activation を処理していない＝無電源/固着。
 
 ## 通知 LED（左側面 RGB・緑=IOE PYG8 / 青=PYG9 / 赤=PM1 LED_EN）
 
