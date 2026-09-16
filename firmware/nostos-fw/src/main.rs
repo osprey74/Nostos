@@ -258,9 +258,16 @@ async fn main(_spawner: Spawner) -> ! {
     .await;
 
     // 起動直後のステータス行（リセット理由・パネル/無線初期化結果・電源状態を残す）。
+    // event: boot / boot_panel_fail（初期化失敗）/ boot_panel_nobusy（初回描画で BUSY が
+    // 上がらず＝波形が走っていない・コールドブート固着の疑い）。
+    let boot_event = match panel.as_ref() {
+        None => "boot_panel_fail",
+        Some(p) if p.last_busy_rose() == Some(false) => "boot_panel_nobusy",
+        Some(_) => "boot",
+    };
     log_status(
         &mut sdlog,
-        if panel.is_some() { "boot" } else { "boot_panel_fail" },
+        boot_event,
         &mut i2c,
         &mut radio,
         radio_ok,

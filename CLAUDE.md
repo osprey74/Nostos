@@ -58,9 +58,14 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
 - **ステータスログ `STATUS.CSV`**（2026-09-16 実機確認）: 電源・無線・受信経過を 10 分ごと＋事象
   （起動/低電池/途絶）で microSD に追記。放電カーブとコールドブート試験の切り分け用
   （firmware/nostos-fw/README.md「ステータスログ」節）。
-- 残: コールドブート固着の解明（工場ファーム・M5PM1/M5IOE1 のソース公開を確認済み。
-  解析リソースは firmware/nostos-fw/README.md「電源」節）、実 GPS での屋外フィールドテスト、
-  CardputerZero 版への移植（cardputerzero-apps）。
+- **コールドブート固着は解決**（2026-09-16）: 真因は M5IOE1 io3（EPD 電源イネーブル）がコールド
+  起動直後に登録どおり駒動されないこと（パネル無電源）。`ioe::set_output_verified()` で IN 読み戻し＋
+  MODE 振り直しを行い、電源ボタン全レール断→起動で正常描画を実機確認。波形は無関係だった
+  （firmware/nostos-fw/README.md「コールドブート固着」節）。
+- **パネル駆動は M5GFX 方式（Mode 2・lut_fast/lut_fastest・明示電圧）へ移植済み**（`panel.rs` `DRIVE`
+  で OTP 方式と切替可）。全面 329ms／差分 132ms・チラつきなし。黒がやや薄い既知差あり。
+- 残: 実 GPS での屋外フィールドテスト、CardputerZero 版への移植（cardputerzero-apps）、
+  黒濃度の改善（全面更新の epd_quality 化）の要否判断。
 
 ## 開発環境
 

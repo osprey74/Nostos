@@ -127,6 +127,88 @@ pub fn set_push_pull_output(
     }
 }
 
+/// M5IOE1 の生レジスタを 1 バイト読む（診断用）。
+pub fn ioe_read_reg(i2c: &mut SysI2c, reg: u8) -> Option<u8> {
+    let mut b = [0u8];
+    i2c.write_read(IOE_ADDR.load(Ordering::Relaxed), &[reg], &mut b)
+        .ok()
+        .map(|_| b[0])
+}
+
+/// M5IOE1 の GPIO 関連レジスタを一括ダンプしてシリアルに出す（コールドブート診断）。
+/// MODE(0x03/04)=1 出力 / OUT(0x05/06) / IN(0x07/08)=実ピンレベル / PU(0x09/0A) / PD(0x0B/0C) /
+/// DRV(0x13/14)=1 オープンドレイン。IN の bit2=io3(EPD_VDD) / bit4=io5(EPD_RST) を見る。
+pub fn dump_ioe_gpio(i2c: &mut SysI2c, tag: &str) {
+    let r = |i2c: &mut SysI2c, reg: u8| ioe_read_reg(i2c, reg).unwrap_or(0xFF);
+    let (m_l, m_h) = (r(i2c, 0x03), r(i2c, 0x04));
+    let (o_l, o_h) = (r(i2c, 0x05), r(i2c, 0x06));
+    let (i_l, i_h) = (r(i2c, 0x07), r(i2c, 0x08));
+    let (pu_l, pu_h) = (r(i2c, 0x09), r(i2c, 0x0A));
+    let (pd_l, pd_h) = (r(i2c, 0x0B), r(i2c, 0x0C));
+    let (d_l, d_h) = (r(i2c, 0x13), r(i2c, 0x14));
+    esp_println::println!(
+        "nostos-fw: ioe1[{}] mode={:02x}{:02x} out={:02x}{:02x} in={:02x}{:02x} pu={:02x}{:02x} pd={:02x}{:02x} drv={:02x}{:02x}",
+        tag, m_h, m_l, o_h, o_l, i_h, i_l, pu_h, pu_l, pd_h, pd_l, d_h, d_l
+    );
+}
+
+fn ioe_write_reg(i2c: &mut SysI2c, reg: u8, v: u8) -> bool {
+    i2c.write(IOE_ADDR.load(Ordering::Relaxed), &[reg, v]).is_ok()
+}
+
+fn ioe_in_bit(i2c: &mut SysI2c, pyg: u8) -> u8 {
+    let (reg, bit) = if pyg <= 8 { (0x07, pyg - 1) } else { (0x08, pyg - 9) };
+    (ioe_read_reg(i2c, reg).unwrap_or(0) >> bit) & 1
+}
+
+/// MODE を入力（＋プルアップ）へ一度落としてから元の設定に戻す「ピンキック」。
+/// IOE1 はコールド起動直後、MODE=1/OUT=1/DRV=push-pull と登録済みでも**出力ドライバが
+/// 有効化されない**ことがある（2026-09-16 実機: io3=EPD_VDD_EN が実ピン LOW のまま→パネル
+/// 無電源→コールドブート固着の真因）。MODE を一度切り替えると駒動が始まる。
+fn kick_pin(i2c: &mut SysI2c, pyg: u8) {
+    let (m_reg, pu_reg, bit) = if pyg <= 8 {
+        (0x03u8, 0x09u8, pyg - 1)
+    } else {
+        (0x04u8, 0x0Au8, pyg - 9)
+    };
+    let Some(m) = ioe_read_reg(i2c, m_reg) else { return };
+    let Some(pu) = ioe_read_reg(i2c, pu_reg) else { return };
+    let _ = ioe_write_reg(i2c, pu_reg, pu | (1 << bit));
+    let _ = ioe_write_reg(i2c, m_reg, m & !(1 << bit));
+    embassy_time::block_for(embassy_time::Duration::from_millis(5));
+    let _ = ioe_write_reg(i2c, pu_reg, pu);
+    let _ = ioe_write_reg(i2c, m_reg, m | (1 << bit));
+    embassy_time::block_for(embassy_time::Duration::from_millis(2));
+}
+
+/// push-pull 出力を設定し、**IN レジスタ（実ピンレベル）で追従を確認**する。追従しなければ
+/// [`kick_pin`] で MODE を振り直して再試行（最大 3 回）。電源イネーブル／リセット系のピンに使う。
+/// 戻り値は最終的にピンが指定レベルになったか。
+pub fn set_output_verified(i2c: &mut SysI2c, pyg: u8, high: bool) -> bool {
+    for attempt in 0..3u8 {
+        let _ = set_push_pull_output(i2c, pyg, high);
+        embassy_time::block_for(embassy_time::Duration::from_millis(2));
+        if ioe_in_bit(i2c, pyg) == high as u8 {
+            if attempt > 0 {
+                esp_println::println!(
+                    "nostos-fw: ioe1 pin{} recovered by kick x{} (want {})",
+                    pyg,
+                    attempt,
+                    high as u8
+                );
+            }
+            return true;
+        }
+        kick_pin(i2c, pyg);
+    }
+    esp_println::println!(
+        "nostos-fw: ioe1 pin{} does NOT follow output (want {})",
+        pyg,
+        high as u8
+    );
+    false
+}
+
 /// 指定レジスタからのバースト読み出し（FT6336G の座標レジスタ一括取得用）。
 pub fn read_burst(i2c: &mut SysI2c, addr: u8, reg: u8, buf: &mut [u8]) -> bool {
     i2c.write_read(addr, &[reg], buf).is_ok()
@@ -361,21 +443,22 @@ pub async fn bring_up(i2c: &mut SysI2c) -> Option<u8> {
     let ioe_addr = begin_ioe(i2c).await;
 
     if ioe_addr.is_some() {
-        let _ = set_push_pull_output(i2c, ioe1::IP2315_I2C_GATE, false);
-        let _ = set_push_pull_output(i2c, ioe1::PDM_VDD_ENABLE, false);
-        let _ = set_push_pull_output(i2c, ioe1::EPD_VDD_ENABLE, true);
+        // 電源イネーブル／リセット系は IN 読み戻しで駒動を確認する（コールド起動直後の IOE1 は
+        // 登録どおりに出力ドライバが有効化されないことがある＝コールドブート固着の真因。
+        // 2026-09-16 実機で io3 を確認）。
+        let _ = set_output_verified(i2c, ioe1::IP2315_I2C_GATE, false);
+        let _ = set_output_verified(i2c, ioe1::PDM_VDD_ENABLE, false);
+        let _ = set_output_verified(i2c, ioe1::EPD_VDD_ENABLE, true);
         // microSD 電源（IOE1 PYG14）を投入。CSV ロガー用（sdlog）。
-        // 使用前に高インピーダンス解除＝出力駆動が必要（set_push_pull_output が M=1 を書く）。
-        let _ = set_push_pull_output(i2c, ioe1::MICROSD_ENABLE, true);
+        let _ = set_output_verified(i2c, ioe1::MICROSD_ENABLE, true);
 
         // FT6336G タッチを電源サイクルして起動（touch_bus と同シーケンス）。
-        // 現状は座標を読まず TOUCH_INT(GPIO4) のタップ検出（画面切替）のみに使う。
-        let _ = set_push_pull_output(i2c, ioe1::TOUCH_RST, false);
-        let _ = set_push_pull_output(i2c, ioe1::TOUCH_VDD_ENABLE, false);
+        let _ = set_output_verified(i2c, ioe1::TOUCH_RST, false);
+        let _ = set_output_verified(i2c, ioe1::TOUCH_VDD_ENABLE, false);
         Timer::after(Duration::from_millis(30)).await;
-        let _ = set_push_pull_output(i2c, ioe1::TOUCH_VDD_ENABLE, true);
+        let _ = set_output_verified(i2c, ioe1::TOUCH_VDD_ENABLE, true);
         Timer::after(Duration::from_millis(20)).await;
-        let _ = set_push_pull_output(i2c, ioe1::TOUCH_RST, true);
+        let _ = set_output_verified(i2c, ioe1::TOUCH_RST, true);
         Timer::after(Duration::from_millis(100)).await;
     }
 
