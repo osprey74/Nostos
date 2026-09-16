@@ -8,6 +8,7 @@
 //! - [`lora`]: SX1262 受信ドライバ（Nostos チャネル camp）
 //! - [`panel`]: SSD1677 OTP モノクロ描画（部分更新バジェット管理）
 //! - [`draw`]: 軌跡マップのレンダリング（`docs/UI.md` 第1画面）
+//! - [`sdlog`] / [`statuslog`]: microSD への受信ログ（`NOSTOS.CSV`）とステータスログ（`STATUS.CSV`）
 //!
 //! HOME 仕様（`docs/UI.md` 確定事項）:
 //! - `FLAG_HOME` 付きフレームで出発点を設定/更新（**Trail には積まない**）
@@ -29,6 +30,7 @@ mod led;
 mod lora;
 mod panel;
 mod sdlog;
+mod statuslog;
 
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
@@ -52,6 +54,9 @@ const TRAIL_CAP: usize = 256;
 
 /// 受信途絶とみなす秒数（この経過で画面を再描画し AGE を更新）。
 const STALE_REDRAW_SECS: u64 = 180;
+
+/// ステータスログ（`STATUS.CSV`）の定期記録間隔 [秒]。
+const STATUS_LOG_SECS: u64 = 600;
 
 /// スワイプと判定する最小移動量 [page px]。これ未満はタップ扱い。
 const SWIPE_MIN_PX: i32 = 40;
@@ -102,6 +107,10 @@ async fn main(_spawner: Spawner) -> ! {
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     println!("nostos-fw: boot");
+    // 今回起動のリセット理由（0x01=電源投入 / 0x03=ソフト / 0x15=USB-UART / 0x16=USB-JTAG）。
+    // ステータスログの `reset_reason` 列に記録し、コールドブート試験の切り分けに使う。
+    let reset_reason = statuslog::reset_reason_code();
+    println!("nostos-fw: reset_reason=0x{:02x}", reset_reason);
 
     // 起動ビープ（GPIO42 ブザー）。バッテリ単体ブートの生存確認用：
     // ピッ 1 回＝ESP 起動、bring_up 後のピピッ＝PM1 電源維持まで到達。
@@ -220,6 +229,11 @@ async fn main(_spawner: Spawner) -> ! {
     let mut vbat_cache = ioe::read_vbat_mv(&mut i2c);
     let mut vin_cache = ioe::read_vin_mv(&mut i2c);
     let mut led_ctl = led::Led::new();
+    // ステータスログ状態。事象（低電池・途絶）は立ち上がりエッジで 1 回だけ記録する。
+    let mut rx_count: u32 = 0;
+    let mut last_status_at = Instant::now();
+    let mut low_batt_logged = false;
+    let mut rx_lost_logged = false;
 
     // 初期画面（受信待ち）。
     render_and_paint(
@@ -237,6 +251,25 @@ async fn main(_spawner: Spawner) -> ! {
         &mut panel,
         &mut i2c,
         &busy,
+    )
+    .await;
+
+    // 起動直後のステータス行（リセット理由・パネル/無線初期化結果・電源状態を残す）。
+    log_status(
+        &mut sdlog,
+        if panel.is_some() { "boot" } else { "boot_panel_fail" },
+        &mut i2c,
+        &mut radio,
+        radio_ok,
+        &StatusCtx {
+            last,
+            last_rx_at,
+            vbat_mv: vbat_cache,
+            vin_mv: vin_cache,
+            rx_count,
+            frontlight: 0,
+            reset_reason,
+        },
     )
     .await;
 
@@ -261,9 +294,47 @@ async fn main(_spawner: Spawner) -> ! {
             );
         }
         // 電源状態は 5 秒ごとに更新（LED 判定と設定画面表示に使用）。
+        // 同じタイミングでステータスログの記録判定も行う（定期 + 立ち上がりエッジ事象）。
         if dbg_tick % 100 == 0 {
             vbat_cache = ioe::read_vbat_mv(&mut i2c);
             vin_cache = ioe::read_vin_mv(&mut i2c);
+
+            let mut event: Option<&str> = None;
+            if last_status_at.elapsed() >= Duration::from_secs(STATUS_LOG_SECS) {
+                event = Some("periodic");
+            }
+            let low = vbat_cache.is_some_and(|v| v > 0 && v < led::LOW_BATT_MV);
+            if low && !low_batt_logged {
+                low_batt_logged = true;
+                event = Some("low_batt");
+            } else if !low {
+                low_batt_logged = false;
+            }
+            let lost = last_rx_at.is_some_and(|t| t.elapsed().as_secs() >= STALE_REDRAW_SECS);
+            if lost && !rx_lost_logged {
+                rx_lost_logged = true;
+                event = Some("rx_lost");
+            }
+            if let Some(ev) = event {
+                log_status(
+                    &mut sdlog,
+                    ev,
+                    &mut i2c,
+                    &mut radio,
+                    radio_ok,
+                    &StatusCtx {
+                        last,
+                        last_rx_at,
+                        vbat_mv: vbat_cache,
+                        vin_mv: vin_cache,
+                        rx_count,
+                        frontlight: if light_dimmed { 0 } else { brightness_idx as u8 },
+                        reset_reason,
+                    },
+                )
+                .await;
+                last_status_at = Instant::now();
+            }
         }
 
         // --- 受信ポーリング ---
@@ -318,6 +389,8 @@ async fn main(_spawner: Spawner) -> ! {
                         snr: pkt.snr,
                     });
                     last_rx_at = Some(Instant::now());
+                    rx_count = rx_count.saturating_add(1);
+                    rx_lost_logged = false;
                     redraw = true;
 
                     // microSD へ CSV 追記（time_unix,seq,fix,home,lat_e7,lon_e7,rssi,snr）。
@@ -555,16 +628,80 @@ async fn main(_spawner: Spawner) -> ! {
     }
 }
 
+/// ステータスログ 1 行に載せるメインループ側の状態（`log_status` の引数まとめ）。
+struct StatusCtx {
+    last: Option<draw::LastRx>,
+    last_rx_at: Option<Instant>,
+    vbat_mv: Option<u16>,
+    vin_mv: Option<u16>,
+    rx_count: u32,
+    frontlight: u8,
+    reset_reason: u8,
+}
+
+/// ステータス 1 行を組み立て、シリアルに出力し、SD（あれば）へ `STATUS.CSV` 追記する。
+/// PM1 の電源レジスタと SX1262 の瞬時状態はここで読む（呼び出し頻度は 10 分に 1 回程度）。
+async fn log_status(
+    sdlog: &mut Option<sdlog::SdLogger>,
+    event: &str,
+    i2c: &mut ioe::SysI2c,
+    radio: &mut lora::Radio,
+    radio_ok: bool,
+    ctx: &StatusCtx,
+) {
+    let (pwr_src, pwr_cfg) = ioe::read_pm1_power_regs(i2c);
+    let radio_st = if radio_ok {
+        let (_irq, rssi, raw) = radio.debug_status();
+        Some((rssi, raw))
+    } else {
+        None
+    };
+    // 壁時計は無い: 最終受信フレームの GPS 時刻 + 経過秒で推定（未受信は 0）。
+    let est_unix = match (ctx.last.filter(|rx| rx.time_unix != 0), ctx.last_rx_at) {
+        (Some(rx), Some(at)) => u64::from(rx.time_unix) + at.elapsed().as_secs(),
+        _ => 0,
+    };
+    let sample = statuslog::Sample {
+        uptime_s: Instant::now().as_secs(),
+        est_unix,
+        vbat_mv: ctx.vbat_mv,
+        vin_mv: ctx.vin_mv,
+        pwr_src,
+        pwr_cfg,
+        radio: radio_st,
+        last_rx_age_s: ctx.last_rx_at.map(|t| t.elapsed().as_secs()),
+        rx_count: ctx.rx_count,
+        frontlight: ctx.frontlight,
+        reset_reason: ctx.reset_reason,
+        event,
+    };
+    let mut lb = LineBuf::new();
+    if !sample.write_csv(&mut lb) {
+        println!("nostos-fw: status line overflow");
+        return;
+    }
+    // シリアルにも同じ行を出す（末尾改行は行に含まれている）。
+    if let Ok(txt) = core::str::from_utf8(lb.as_bytes()) {
+        esp_println::print!("nostos-status: {}", txt);
+    }
+    if let Some(logger) = sdlog.as_mut() {
+        if !logger.append_status(lb.as_bytes()).await {
+            println!("nostos-fw: status sdlog append failed");
+        }
+    }
+}
+
 /// SD ログ 1 行を組み立てる固定長バッファ（`core::fmt::Write` 実装・no-std 用）。
+/// ステータス行（最長 ~110 バイト）も収まるサイズ。
 struct LineBuf {
-    buf: [u8; 96],
+    buf: [u8; 160],
     len: usize,
 }
 
 impl LineBuf {
     fn new() -> Self {
         Self {
-            buf: [0; 96],
+            buf: [0; 160],
             len: 0,
         }
     }

@@ -22,10 +22,15 @@ use esp_hal::Async;
 use sdio::{sd::Card, BlockDevice};
 use static_cell::StaticCell;
 
-/// ログファイル名（FAT 8.3）。再起動をまたいで追記する。
+/// 受信ログのファイル名（FAT 8.3）。再起動をまたいで追記する。
 const LOG_FILE: &str = "NOSTOS.CSV";
-/// 新規作成時に書く CSV ヘッダ。
+/// 受信ログの新規作成時に書く CSV ヘッダ。
 const CSV_HEADER: &[u8] = b"time_unix,seq,fix,home,lat_e7,lon_e7,rssi,snr\n";
+/// ステータスログのファイル名（`statuslog` モジュール参照）。
+const STATUS_FILE: &str = "STATUS.CSV";
+/// ステータスログの CSV ヘッダ（列順は `statuslog::Sample::write_csv` と一致させる）。
+const STATUS_HEADER: &[u8] = b"uptime_s,est_unix,vbat_mv,vin_mv,batt_pct,pwr_src,pwr_cfg,\
+rssi_floor,sx_status,last_rx_age_s,rx_count,frontlight,reset_reason,event\n";
 
 /// カードクロック。ログ用途なので控えめの 20MHz（初期化は sdio が低速で行う）。
 const CARD_HZ: u32 = 20_000_000;
@@ -61,39 +66,54 @@ impl SdLogger {
         Some(Self { card })
     }
 
-    /// CSV 1 行を `NOSTOS.CSV` に追記する。成功で `true`。
+    /// 受信ログ CSV 1 行を `NOSTOS.CSV` に追記する。成功で `true`。
     pub async fn append(&mut self, line: &[u8]) -> bool {
+        self.append_to(LOG_FILE, CSV_HEADER, line).await
+    }
+
+    /// ステータスログ CSV 1 行を `STATUS.CSV` に追記する。成功で `true`。
+    pub async fn append_status(&mut self, line: &[u8]) -> bool {
+        self.append_to(STATUS_FILE, STATUS_HEADER, line).await
+    }
+
+    /// `file` に 1 行追記する（無ければ `header` 付きで作成）。追記のたびにマウント/アンマウント。
+    async fn append_to(&mut self, file: &str, header: &[u8], line: &[u8]) -> bool {
         let stream = BufStream::<_, 512>::new(&mut self.card);
         match Scheme::open(stream).await {
             Ok(Scheme::Mbr(mut mbr)) => {
                 let fat_idx = mbr.iter_used().find(|(_, p)| p.is_fat()).map(|(i, _)| i);
                 match fat_idx {
                     Some(idx) => match mbr.open_partition(idx).await {
-                        Ok(slice) => write_line(slice, line).await,
+                        Ok(slice) => write_line(slice, file, header, line).await,
                         Err(_) => false,
                     },
                     None => false,
                 }
             }
-            Ok(Scheme::Superfloppy(io)) => write_line(io, line).await,
+            Ok(Scheme::Superfloppy(io)) => write_line(io, file, header, line).await,
             _ => false,
         }
     }
 }
 
 /// FAT をマウントして 1 行追記→アンマウント。ファイルが無ければヘッダ付きで作成する。
-async fn write_line<IO: ReadWriteSeek>(io: IO, line: &[u8]) -> bool {
+async fn write_line<IO: ReadWriteSeek>(
+    io: IO,
+    file: &str,
+    header: &[u8],
+    line: &[u8],
+) -> bool {
     let Ok(fs) = FileSystem::new(io, FsOptions::new()).await else {
         return false;
     };
     // fs を借用する処理はブロックに閉じ込め、その後に unmount する（借用衝突回避）。
     let ok = {
         let root = fs.root_dir();
-        let file = match root.open_file(LOG_FILE).await {
+        let file = match root.open_file(file).await {
             Ok(f) => Some(f),
-            Err(_) => match root.create_file(LOG_FILE).await {
+            Err(_) => match root.create_file(file).await {
                 Ok(mut f) => {
-                    if f.write_all(CSV_HEADER).await.is_err() {
+                    if f.write_all(header).await.is_err() {
                         None
                     } else {
                         Some(f)

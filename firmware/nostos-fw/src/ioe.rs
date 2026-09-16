@@ -172,6 +172,16 @@ pub fn read_vin_mv(i2c: &mut SysI2c) -> Option<u16> {
     Some(pmic::adc_mv(lo, hi))
 }
 
+/// M5PM1 の電源ステータス生値 `(PWR_SRC 0x04, PWR_CFG 0x06)` を読む（ステータスログ用）。
+/// PWR_SRC: bit0=5VIN 有効 / bit1=5VINOUT 有効 / bit2=電池有効。
+/// PWR_CFG: bit0=充電有効 / bit1=DCDC / bit2=LDO / bit3=BOOST / bit4=LED。
+pub fn read_pm1_power_regs(i2c: &mut SysI2c) -> (Option<u8>, Option<u8>) {
+    let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);
+    let src = pm1.read_at(pmic::PWR_SRC).ok();
+    let cfg = pm1.read_at(pmic::PWR_CFG).ok();
+    (src, cfg)
+}
+
 /// フロントライトの PWM デューティを設定する（0 = 消灯。touch_bus `apply_lamp` と同手順）。
 pub fn set_frontlight(i2c: &mut SysI2c, duty: u16) {
     let mut pm1 = m5stack_papermono_lite::m5pm1::M5pm1::new(&mut *i2c, addresses::M5PM1);

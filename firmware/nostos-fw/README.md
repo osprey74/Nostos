@@ -148,6 +148,33 @@ PC で回収できる（実 GPS フィールドテスト用）。
   電源レール保持のままファーム再実行＝**パネル固着なしで再起動**し microSD を再初期化する。
   電源ボタン（4 秒長押しはコールドサイクル→固着）を使わずに済むフィールド運用向けの再起動手段。
 
+### ステータスログ `STATUS.CSV`（2026-09-16 実機確認）
+
+受信の有無に関わらず、機体の電源・無線・受信経過を **10 分ごと＋事象発生時**に同じ SD へ追記する
+ヘルスログ。バッテリ枯渇までの放電カーブや、コールドブート試験のリセット理由・パネル初期化結果を
+事後に追う目的（2026-09-16 の「2 日放置で電池枯渇→パネル固着」を機に追加）。
+
+- **周期**: `STATUS_LOG_SECS`（600 秒）。事象行を書いた時点で周期タイマは打ち直す
+- **事象**（`event` 列）: `boot`（起動直後）／`boot_panel_fail`（パネル初期化失敗で起動）／
+  `periodic`／`low_batt`（VBAT が `led::LOW_BATT_MV`=3500mV を下回った立ち上がり 1 回）／
+  `rx_lost`（最終受信から `STALE_REDRAW_SECS`=180 秒経過の立ち上がり 1 回・次の受信で再武装）
+- **列**: `uptime_s,est_unix,vbat_mv,vin_mv,batt_pct,pwr_src,pwr_cfg,rssi_floor,sx_status,`
+  `last_rx_age_s,rx_count,frontlight,reset_reason,event`
+  - `est_unix`: 壁時計が無いため「最終受信フレームの GPS 時刻＋経過秒」の推定。未受信は 0
+    （放置中は `uptime_s` が主キー）
+  - `pwr_src`（PM1 0x04）: bit0=5VIN／bit1=5VINOUT／bit2=電池。`pwr_cfg`（PM1 0x06）: bit0=充電有効／
+    bit1=DCDC／bit2=LDO／bit3=BOOST／bit4=LED
+  - `rssi_floor`/`sx_status`: SX1262 の瞬時 RSSI[dBm]／ステータス生値。`reset_reason`: ESP32-S3 ROM の
+    リセット理由（0x01=電源投入／0x03=ソフト／0x0C=CPU ソフト／0x0F=ブラウンアウト／0x15=USB-UART／
+    0x16=USB-JTAG）
+  - 読めなかった値は `--`
+- **シリアルにも同じ行**を `nostos-status: ...` として出力する（SD 無しでも観測可）。追記失敗は
+  `nostos-fw: status sdlog append failed`
+- 実装: [`src/statuslog.rs`]（行の組み立て・リセット理由）、[`src/main.rs`] `log_status()`（5 秒の
+  電源計測ティックで判定）、[`src/sdlog.rs`] `append_status()`（`NOSTOS.CSV` と同じマウント/アンマウント
+  方式）。実機起動行の例:
+  `6,0,3926,4980,69,0x05,0x07,-109,0xd2,--,0,0,0x15,boot`
+
 ## ビルド / フラッシュ（Windows）
 
 ```powershell
