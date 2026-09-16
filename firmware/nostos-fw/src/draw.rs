@@ -46,7 +46,10 @@ pub const TAB_Y0: i32 = 760;
 pub const SETTINGS_AUTOOFF_Y: (i32, i32) = (236, 296);
 
 /// 設定画面「再起動（ウォーム・SD 再初期化）」行のタップ判定 y 範囲（ページ座標）。
-pub const SETTINGS_RESET_Y: (i32, i32) = (498, 560);
+pub const SETTINGS_RESET_Y: (i32, i32) = (498, 548);
+
+/// 設定画面「SD 取り外し（ロガー停止）」行のタップ判定 y 範囲（ページ座標）。
+pub const SETTINGS_SD_Y: (i32, i32) = (548, 598);
 
 /// グリッド間隔 [px]（スケールバーと連動）。
 const GRID_PX: i32 = 80;
@@ -80,6 +83,19 @@ pub struct Status {
     pub auto_off: bool,
     /// VIN 電圧 [mV]（USB 給電検出・設定画面用）。
     pub vin_mv: Option<u16>,
+    /// microSD ロガーの状態（設定画面「SD」行の表示用）。
+    pub sd: SdState,
+}
+
+/// microSD ロガーの状態。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SdState {
+    /// 起動時にカード無し／初期化失敗（REBOOT で再試行）。
+    NoCard,
+    /// 記録中（カードを抜いてはいけない）。
+    Logging,
+    /// 「SD」行タップでロガー停止済み。カードを抜いてよい（再使用は REBOOT）。
+    Ejected,
 }
 
 /// 最新受信フレームの表示用スナップショット。
@@ -1099,22 +1115,44 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
     line(bw, red, 8, SETTINGS_RESET_Y.0, PAGE_W - 8, SETTINGS_RESET_Y.0);
     {
         let mut ink = Ink::black(bw, red);
-        let _ = Text::new("REBOOT", Point::new(16, SETTINGS_RESET_Y.0 + 26), big).draw(&mut ink);
+        let _ = Text::new("REBOOT", Point::new(16, SETTINGS_RESET_Y.0 + 24), big).draw(&mut ink);
         let _ = Text::with_alignment(
             "WARM",
-            Point::new(PAGE_W - 20, SETTINGS_RESET_Y.0 + 26),
+            Point::new(PAGE_W - 20, SETTINGS_RESET_Y.0 + 24),
             big,
             Alignment::Right,
         )
         .draw(&mut ink);
         let _ = Text::new(
             "(tap row: warm reset / SD re-init)",
-            Point::new(16, SETTINGS_RESET_Y.0 + 46),
+            Point::new(16, SETTINGS_RESET_Y.0 + 43),
             mid,
         )
         .draw(&mut ink);
     }
     line(bw, red, 8, SETTINGS_RESET_Y.1, PAGE_W - 8, SETTINGS_RESET_Y.1);
+
+    // --- SD 取り外し（行タップでロガー停止 → カードを抜いてよい状態にする）---
+    // 追記は毎回マウント/アンマウントで完結するが、書き込み中に抜く事故を確実に避けるため、
+    // 明示的に停止してから抜く。再使用はカード挿入後に REBOOT 行（ウォームリセット）。
+    {
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::new("SD CARD", Point::new(16, SETTINGS_SD_Y.0 + 24), big).draw(&mut ink);
+        let (state, hint) = match st.sd {
+            SdState::NoCard => ("NO CARD", "(insert card, then REBOOT)"),
+            SdState::Logging => ("LOGGING", "(tap row: stop log -> safe to remove)"),
+            SdState::Ejected => ("REMOVE OK", "(log stopped; REBOOT to use again)"),
+        };
+        let _ = Text::with_alignment(
+            state,
+            Point::new(PAGE_W - 20, SETTINGS_SD_Y.0 + 24),
+            big,
+            Alignment::Right,
+        )
+        .draw(&mut ink);
+        let _ = Text::new(hint, Point::new(16, SETTINGS_SD_Y.0 + 43), mid).draw(&mut ink);
+    }
+    line(bw, red, 8, SETTINGS_SD_Y.1, PAGE_W - 8, SETTINGS_SD_Y.1);
 
     // --- 電源状態 ---
     {
@@ -1136,8 +1174,8 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
             }
         }
         let mut ink = Ink::black(bw, red);
-        let _ = Text::new(l.as_str(), Point::new(16, 588), mid).draw(&mut ink);
-        let _ = Text::new("hold screen 1s = POWER OFF", Point::new(16, 620), mid).draw(&mut ink);
+        let _ = Text::new(l.as_str(), Point::new(16, 624), mid).draw(&mut ink);
+        let _ = Text::new("hold screen 1s = POWER OFF", Point::new(16, 654), mid).draw(&mut ink);
         let _ = Text::new(
             concat!("nostos-fw v", env!("CARGO_PKG_VERSION")),
             Point::new(16, MAP_Y1 + 24),

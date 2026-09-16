@@ -141,9 +141,13 @@ PC で回収できる（実 GPS フィールドテスト用）。
 - **形式**: `time_unix,seq,fix,home,lat_e7,lon_e7,rssi,snr`（緯度経度は 1e7 整数＝PC 側で ÷1e7）
 - **異常時**: カード無し/初期化失敗でも受信は継続（起動ログ `sdlog card ok` / `none/fail`、
   追記失敗時のみ `nostos-rx: sdlog append failed`）
-- 実装: [`src/sdlog.rs`]。カードは要 FAT32 フォーマット。抜くのはフレーム受信の**合間**（カード
-  アイドル時）に。SD 初期化は起動時 1 回のため、**カード挿入後は設定画面の「REBOOT」行タップ
-  でウォームリセット**して再初期化する（電源ボタンや PC 不要・下記）。
+- 実装: [`src/sdlog.rs`]。カードは要 FAT32 フォーマット。SD 初期化は起動時 1 回のため、
+  **カード挿入後は設定画面の「REBOOT」行タップでウォームリセット**して再初期化する
+  （電源ボタンや PC 不要・下記）。
+- **カードの抜き方（2026-09-16）**: 設定画面の **「SD CARD」行をタップ**（`LOGGING` → `REMOVE OK`）。
+  ステータスログに `sd_eject` 行を書いてからロガーを破棄し、以後は受信/ステータスとも SD に
+  書かないので安全に抜ける。再使用はカードを挿して REBOOT 行。起動時にカード無しなら `NO CARD`。
+  ⚠️ REBOOT タップ直後に抜くのは**逆に危険**（再起動直後に SD 初期化＋`boot` 行の書き込みが走る）。
 - **設定画面「REBOOT（WARM）」行**: タップで `esp_hal::system::software_reset()`（ソフトリセット）。
   電源レール保持のままファーム再実行＝**パネル固着なしで再起動**し microSD を再初期化する。
   電源ボタン（4 秒長押しはコールドサイクル→固着）を使わずに済むフィールド運用向けの再起動手段。
@@ -157,7 +161,8 @@ PC で回収できる（実 GPS フィールドテスト用）。
 - **周期**: `STATUS_LOG_SECS`（600 秒）。事象行を書いた時点で周期タイマは打ち直す
 - **事象**（`event` 列）: `boot`（起動直後）／`boot_panel_fail`（パネル初期化失敗で起動）／
   `periodic`／`low_batt`（VBAT が `led::LOW_BATT_MV`=3500mV を下回った立ち上がり 1 回）／
-  `rx_lost`（最終受信から `STALE_REDRAW_SECS`=180 秒経過の立ち上がり 1 回・次の受信で再武装）
+  `rx_lost`（最終受信から `STALE_REDRAW_SECS`=180 秒経過の立ち上がり 1 回・次の受信で再武装）／
+  `sd_eject`（設定画面「SD CARD」行でロガー停止。SD 上の最終行になる）
 - **列**: `uptime_s,est_unix,vbat_mv,vin_mv,batt_pct,pwr_src,pwr_cfg,rssi_floor,sx_status,`
   `last_rx_age_s,rx_count,frontlight,reset_reason,event`
   - `est_unix`: 壁時計が無いため「最終受信フレームの GPS 時刻＋経過秒」の推定。未受信は 0

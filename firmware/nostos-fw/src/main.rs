@@ -234,6 +234,8 @@ async fn main(_spawner: Spawner) -> ! {
     let mut last_status_at = Instant::now();
     let mut low_batt_logged = false;
     let mut rx_lost_logged = false;
+    // 設定画面「SD CARD」行でロガーを停止した（カードを抜いてよい）か。
+    let mut sd_ejected = false;
 
     // 初期画面（受信待ち）。
     render_and_paint(
@@ -248,6 +250,7 @@ async fn main(_spawner: Spawner) -> ! {
         view_center,
         radio_ok,
         (brightness_idx, auto_off, vbat_cache, vin_cache),
+        sd_state(&sdlog, sd_ejected),
         &mut panel,
         &mut i2c,
         &busy,
@@ -561,6 +564,35 @@ async fn main(_spawner: Spawner) -> ! {
                         println!("nostos-fw: WARM RESET (software_reset / SD re-init)");
                         Timer::after(Duration::from_millis(80)).await;
                         esp_hal::system::software_reset();
+                    } else if screen == Screen::Settings
+                        && touch_last.1 >= draw::SETTINGS_SD_Y.0
+                        && touch_last.1 < draw::SETTINGS_SD_Y.1
+                        && sdlog.is_some()
+                    {
+                        // SD 取り外し: 最後に `sd_eject` 行を記録してからロガーを破棄する。
+                        // 以後は受信/ステータスとも SD に書かないので、カードを抜いてよい。
+                        // 再使用は REBOOT 行（起動時にのみ SD を初期化するため）。
+                        log_status(
+                            &mut sdlog,
+                            "sd_eject",
+                            &mut i2c,
+                            &mut radio,
+                            radio_ok,
+                            &StatusCtx {
+                                last,
+                                last_rx_at,
+                                vbat_mv: vbat_cache,
+                                vin_mv: vin_cache,
+                                rx_count,
+                                frontlight: if light_dimmed { 0 } else { brightness_idx as u8 },
+                                reset_reason,
+                            },
+                        )
+                        .await;
+                        sdlog = None;
+                        sd_ejected = true;
+                        println!("nostos-fw: SD EJECT (logger stopped, safe to remove)");
+                        redraw = true;
                     }
                 }
             }
@@ -618,6 +650,7 @@ async fn main(_spawner: Spawner) -> ! {
                 view_center,
                 radio_ok,
                 (brightness_idx, auto_off, vbat_cache, vin_cache),
+                sd_state(&sdlog, sd_ejected),
                 &mut panel,
                 &mut i2c,
                 &busy,
@@ -625,6 +658,15 @@ async fn main(_spawner: Spawner) -> ! {
             .await;
             last_render_at = Instant::now();
         }
+    }
+}
+
+/// 設定画面「SD CARD」行に表示するロガー状態。
+fn sd_state(sdlog: &Option<sdlog::SdLogger>, ejected: bool) -> draw::SdState {
+    match (sdlog.is_some(), ejected) {
+        (true, _) => draw::SdState::Logging,
+        (false, true) => draw::SdState::Ejected,
+        (false, false) => draw::SdState::NoCard,
     }
 }
 
@@ -749,6 +791,7 @@ async fn render_and_paint(
     radio_ok: bool,
     // (輝度段階, 自動消灯, VBAT[mV], VIN[mV])
     power_ui: (usize, bool, Option<u16>, Option<u16>),
+    sd: draw::SdState,
     panel: &mut Option<panel::Panel>,
     i2c: &mut ioe::SysI2c,
     busy: &Input<'static>,
@@ -768,6 +811,7 @@ async fn render_and_paint(
         brightness_idx: power_ui.0,
         auto_off: power_ui.1,
         vin_mv: power_ui.3,
+        sd,
     };
     match screen {
         Screen::Trail => {

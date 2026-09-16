@@ -12,7 +12,8 @@
 //! - `rssi_floor`/`sx_status`: SX1262 の瞬時 RSSI[dBm]・ステータス生値（16 進）
 //! - `reset_reason`: ESP32-S3 ROM のリセット理由コード（16 進。0x01=電源投入 / 0x03=ソフト
 //!   リセット / 0x0C=CPU ソフト / 0x15=USB-UART / 0x16=USB-JTAG / 0x0F=ブラウンアウト）
-//! - `event`: `boot` / `periodic` / `low_batt` / `rx_lost`
+//! - `event`: `boot` / `boot_panel_fail` / `periodic` / `low_batt` / `rx_lost` /
+//!   `sd_eject`（設定画面「SD CARD」行でロガー停止。この行が SD 上の最終行になる）
 
 /// 1 サンプル分の値。`None` は「読めなかった」を表し `--` で出力する。
 pub struct Sample<'a> {
