@@ -67,7 +67,14 @@ C6L（Meshtastic 送信ノード）が毎分ブロードキャストする Posit
   （経緯は firmware/nostos-fw/README.md「パネル駆動方式」節）。
 - **電源オフ運用可**（2026-09-17 実機確認）: 設定タブ 1 秒ホールド→PM1 シャットダウン→電源ボタン短押しで
   コールドブート正常。明るさ・自動消灯は PM1 RTC RAM に永続化（自動消灯中の再起動でも復元・再点灯）。
-- 残: 実 GPS での屋外フィールドテスト、CardputerZero 版への移植（cardputerzero-apps）。
+- **屋外フィールドテスト完了**（2026-09-17〜18）: 実 GPS で往復約 102 km・335 フレーム受信・seq 欠番ゼロ、
+  40 km 地点でも同一車内で RSSI -80 dBm 前後。翌日の終日運用も問題なし。C6L はモバイルバッテリーの自動オフに
+  かかるため車のアクセサリー電源で運用。生ログは CSV（`log/`・コミット禁止）、GPX は
+  `firmware/nostos-fw/tools/csv2gpx.py` で変換。
+- **軌跡の記録 一時停止**（2026-09-18 実機確認）: 設定タブ「記録」行タップで ON⇄PAUSED。受信・CSV・LED は
+  継続し Trail への追加だけ止める（停車中の GPS ふらつき対策）。`STATUS.CSV` に `trail_pause`/`trail_resume`。
+  Trail/HOME は RAM のみで再起動で空になる（現状仕様。復元案は firmware/nostos-fw/README.md「未実装」節）。
+- 残: CardputerZero 版への移植（cardputerzero-apps）。
 
 ## 開発環境
 

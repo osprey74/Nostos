@@ -43,7 +43,8 @@ BSP（`m5stack-papermono-lite` / `m5stack-papermono`）は `g:\dev\papermono-rs`
    **濃破線の帰路方位**・家マーカー直下に距離と方位（BRG）。HOME フレーム未受信の間は
    最初の受信点を暫定出発点とし「**HOME\***」表記（受信で正式値に置換）
 3. **設定**（モノクロ）: 明るさ 5 段階 OFF/1/2/3/MAX（A/B・4 ボックスのバー）・自動消灯 30s（行タップでトグル）・
-   通知 LED 凡例・REBOOT / SD CARD 行・BAT/VIN 電圧・FW バージョン
+   記録 ON/PAUSED（軌跡の記録 一時停止・行タップでトグル・下記）・通知 LED 凡例・REBOOT / SD CARD 行・
+   BAT/VIN 電圧・FW バージョン
 
 ### パネル駆動方式（`src/panel.rs`・2026-09-16）
 
@@ -131,6 +132,20 @@ M5Unified／工場ファームはこの領域を使っていない（2026-09-16 
 明るさの A/B ボタンは連打できる: ライトは即時に変わり、設定画面の描き直しは操作が
 `BRIGHTNESS_REDRAW_DELAY_MS`=600ms 止まってから 1 回だけ行う（描画中のボタン取りこぼし防止）。
 
+## 軌跡の記録 一時停止（設定画面「記録」行・2026-09-18）
+
+停車中や帰宅後に C6L の GPS がふらついて軌跡マップに点が溜まるのを防ぐ、**Trail への追加だけを止める**
+モード。設定画面の「記録」行タップで `ON` ⇄ `PAUSED`（クリック音）。
+
+- **止まるもの**: Trail への push（軌跡の点・線）。停止中は現在地マーカー（◉）と帰路の距離・方位も
+  停止時点の最終記録点で固定される
+- **続くもの**: LoRa 受信（ヘッダの時刻・`RX … AGO`・緑 LED）、`NOSTOS.CSV` への追記（生データは常に全件）、
+  HOME フレームの処理（HOME 変更／seq=0 による Trail リセットも通常どおり）
+- **表示**: 軌跡/帰路画面のヘッダ、画面名の右に `PAUSED`
+- **ログ**: 切替時に `STATUS.CSV` へ `trail_pause` / `trail_resume` 行を書く（CSV から GPX 化する際に
+  停止区間を除外する手がかり。`NOSTOS.CSV` 側にはフラグを付けない）
+- **永続化しない**: Trail 自体が RAM のみで再起動で空になるため、起動時は常に `ON`
+
 ## microSD CSV ロガー（2026-09-14 実機確認）
 
 受信した NostosFrame を **microSD に CSV 追記**するオフラインロガー。実験後に SD を抜いて
@@ -164,7 +179,8 @@ PC で回収できる（実 GPS フィールドテスト用）。
 - **事象**（`event` 列）: `boot`（起動直後）／`boot_panel_fail`（パネル初期化失敗で起動）／
   `periodic`／`low_batt`（VBAT が `led::LOW_BATT_MV`=3500mV を下回った立ち上がり 1 回）／
   `rx_lost`（最終受信から `STALE_REDRAW_SECS`=180 秒経過の立ち上がり 1 回・次の受信で再武装）／
-  `sd_eject`（設定画面「SD CARD」行でロガー停止。SD 上の最終行になる）
+  `sd_eject`（設定画面「SD CARD」行でロガー停止。SD 上の最終行になる）／
+  `trail_pause` / `trail_resume`（設定画面「記録」行で軌跡の記録を一時停止／再開）
 - **列**: `uptime_s,est_unix,vbat_mv,vin_mv,batt_pct,pwr_src,pwr_cfg,rssi_floor,sx_status,`
   `last_rx_age_s,rx_count,frontlight,reset_reason,event`
   - `est_unix`: 壁時計が無いため「最終受信フレームの GPS 時刻＋経過秒」の推定。未受信は 0
@@ -203,8 +219,10 @@ espflash flash --port COM8 --monitor target\xtensa-esp32s3-none-elf\release\nost
 
 ## 未実装（次フェーズ）
 
-- 下部タブ（タッチ座標デコード）・設定タブ（フロントライト 5 段階）・RGB LED 通知
-- 日本語ラベル（ビットマップフォント埋め込み）
+- ~~下部タブ・設定タブ・RGB LED 通知・日本語ラベル~~（2026-09-13 実装済み）
+- **軌跡の再起動またぎ復元**（案・未着手）: Trail / HOME は RAM のみで、電源オフ→起動で軌跡は空から
+  始まる（HOME は C6L の 10 送信ごとの再放送で数分内に復元）。必要なら起動時に `NOSTOS.CSV` の末尾
+  （直近の HOME 行以降）を読み戻して Trail を再構築する
 
 ※ C6L 側 UI（OLED 3 ページ・長押し HOME 確定＋`FLAG_HOME` 送出）は 2026-09-13 実機確認済み
 （`firmware/c6l-beacon`）。HOME フレーム受信で HOME\* → 正式 HOME への置換も E2E 確認済み。

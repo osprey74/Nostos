@@ -269,6 +269,10 @@ async fn main(_spawner: Spawner) -> ! {
     let mut rx_lost_logged = false;
     // 設定画面「SD CARD」行でロガーを停止した（カードを抜いてよい）か。
     let mut sd_ejected = false;
+    // 設定画面「記録」行で軌跡の記録を一時停止中か。受信・CSV・LED は継続し Trail への push だけ
+    // 止める（停車中の GPS ふらつきで軌跡が汚れるのを防ぐ）。起動時は常に記録 ON（Trail 自体が
+    // RAM のみで再起動で空になるため、永続化しない）。
+    let mut trail_paused = false;
 
     // 初期画面（受信待ち）。
     render_and_paint(
@@ -284,6 +288,7 @@ async fn main(_spawner: Spawner) -> ! {
         radio_ok,
         (brightness_idx, auto_off, vbat_cache, vin_cache),
         sd_state(&sdlog, sd_ejected),
+        trail_paused,
         &mut panel,
         &mut i2c,
         &busy,
@@ -408,6 +413,8 @@ async fn main(_spawner: Spawner) -> ! {
                             println!("nostos-rx: HOME set, trail reset");
                         }
                         home = Some(p);
+                    } else if f.has_fix() && trail_paused {
+                        println!("nostos-rx: trail paused, point not recorded");
                     } else if f.has_fix() {
                         trail.push(f.geopoint());
                         // HOME 未受信の間は最古点への距離・方位を参考出力（rxtest 互換）。
@@ -603,6 +610,33 @@ async fn main(_spawner: Spawner) -> ! {
                         println!("nostos-fw: auto_off -> {}", auto_off as u8);
                         redraw = true;
                     } else if screen == Screen::Settings
+                        && touch_last.1 >= draw::SETTINGS_REC_Y.0
+                        && touch_last.1 < draw::SETTINGS_REC_Y.1
+                    {
+                        // 軌跡の記録 一時停止/再開。ステータスログに事象を残し、CSV 解析時に
+                        // 停止区間を切り分けられるようにする（NOSTOS.CSV 自体は継続記録）。
+                        trail_paused = !trail_paused;
+                        beep_blocking(&mut buzzer, &bz_delay, 15);
+                        println!("nostos-fw: trail record -> {}", if trail_paused { "PAUSED" } else { "ON" });
+                        log_status(
+                            &mut sdlog,
+                            if trail_paused { "trail_pause" } else { "trail_resume" },
+                            &mut i2c,
+                            &mut radio,
+                            radio_ok,
+                            &StatusCtx {
+                                last,
+                                last_rx_at,
+                                vbat_mv: vbat_cache,
+                                vin_mv: vin_cache,
+                                rx_count,
+                                frontlight: if light_dimmed { 0 } else { brightness_idx as u8 },
+                                reset_reason,
+                            },
+                        )
+                        .await;
+                        redraw = true;
+                    } else if screen == Screen::Settings
                         && touch_last.1 >= draw::SETTINGS_RESET_Y.0
                         && touch_last.1 < draw::SETTINGS_RESET_Y.1
                     {
@@ -707,6 +741,7 @@ async fn main(_spawner: Spawner) -> ! {
                 radio_ok,
                 (brightness_idx, auto_off, vbat_cache, vin_cache),
                 sd_state(&sdlog, sd_ejected),
+                trail_paused,
                 &mut panel,
                 &mut i2c,
                 &busy,
@@ -848,6 +883,7 @@ async fn render_and_paint(
     // (輝度段階, 自動消灯, VBAT[mV], VIN[mV])
     power_ui: (usize, bool, Option<u16>, Option<u16>),
     sd: draw::SdState,
+    trail_paused: bool,
     panel: &mut Option<panel::Panel>,
     i2c: &mut ioe::SysI2c,
     busy: &Input<'static>,
@@ -868,6 +904,7 @@ async fn render_and_paint(
         auto_off: power_ui.1,
         vin_mv: power_ui.3,
         sd,
+        trail_paused,
     };
     match screen {
         Screen::Trail => draw::render_trail(bw, red, trail, &st),

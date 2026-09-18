@@ -45,12 +45,14 @@ pub const TAB_Y0: i32 = 760;
 
 /// 設定画面「自動消灯」行のタップ判定 y 範囲（ページ座標）。
 pub const SETTINGS_AUTOOFF_Y: (i32, i32) = (236, 296);
+/// 設定画面「記録」行（軌跡の記録 一時停止/再開・行タップでトグル）のタップ判定 Y 範囲。
+pub const SETTINGS_REC_Y: (i32, i32) = (296, 356);
 
 /// 設定画面「再起動（ウォーム・SD 再初期化）」行のタップ判定 y 範囲（ページ座標）。
-pub const SETTINGS_RESET_Y: (i32, i32) = (498, 548);
+pub const SETTINGS_RESET_Y: (i32, i32) = (512, 562);
 
 /// 設定画面「SD 取り外し（ロガー停止）」行のタップ判定 y 範囲（ページ座標）。
-pub const SETTINGS_SD_Y: (i32, i32) = (548, 598);
+pub const SETTINGS_SD_Y: (i32, i32) = (562, 612);
 
 /// グリッド間隔 [px]（スケールバーと連動）。
 const GRID_PX: i32 = 80;
@@ -86,6 +88,8 @@ pub struct Status {
     pub vin_mv: Option<u16>,
     /// microSD ロガーの状態（設定画面「SD」行の表示用）。
     pub sd: SdState,
+    /// 軌跡の記録を一時停止中か（受信・ログは継続、Trail への追加だけ止める）。
+    pub trail_paused: bool,
 }
 
 /// microSD ロガーの状態。
@@ -575,6 +579,11 @@ fn draw_header(bw: &mut [u8], red: &mut [u8], st: &Status, screen: &str) {
         let mut ink = Ink::black(bw, red);
         let _ = Text::new("NOSTOS", Point::new(12, 42), big).draw(&mut ink);
         let _ = Text::new(screen, Point::new(88, 42), mid).draw(&mut ink);
+        if st.trail_paused {
+            // 軌跡の記録 一時停止中（設定画面「記録」行）。画面名の右に明示する。
+            let x = 88 + screen.len() as i32 * 9 + 12;
+            let _ = Text::new("PAUSED", Point::new(x, 42), mid).draw(&mut ink);
+        }
 
         let mut l1 = FmtBuf::<24>::new();
         match st.last.filter(|rx| rx.time_unix != 0) {
@@ -1092,11 +1101,28 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
     }
     line(bw, red, 8, SETTINGS_AUTOOFF_Y.1, PAGE_W - 8, SETTINGS_AUTOOFF_Y.1);
 
-    // --- 通知 LED 凡例 ---
-    draw_jp(bw, red, 16, 330, "凡例", display::GRAY_BLACK);
+    // --- 記録（軌跡への追加を一時停止/再開。タップでトグル）---
+    // 停車中・帰宅後に GPS のふらつきで軌跡に点が溜まるのを避ける。受信・CSV ログ・LED は
+    // 継続し、Trail への push だけ止める（停止中は現在地マーカー・帰路距離も停止時点で固定）。
+    draw_jp(bw, red, 16, 312, "記録", display::GRAY_BLACK);
     {
         let mut ink = Ink::black(bw, red);
-        let _ = Text::new(": LED", Point::new(50, 346), mid).draw(&mut ink);
+        let (s, hint) = if st.trail_paused {
+            ("PAUSED", "(tap row to resume trail)")
+        } else {
+            ("ON", "(tap row to pause trail)")
+        };
+        let _ = Text::with_alignment(s, Point::new(PAGE_W - 20, 328), big, Alignment::Right)
+            .draw(&mut ink);
+        let _ = Text::new(hint, Point::new(16, 348), mid).draw(&mut ink);
+    }
+    line(bw, red, 8, SETTINGS_REC_Y.1, PAGE_W - 8, SETTINGS_REC_Y.1);
+
+    // --- 通知 LED 凡例 ---
+    draw_jp(bw, red, 16, 372, "凡例", display::GRAY_BLACK);
+    {
+        let mut ink = Ink::black(bw, red);
+        let _ = Text::new(": LED", Point::new(50, 388), mid).draw(&mut ink);
     }
     const LEGEND: [(&str, &str); 4] = [
         ("受信", "GREEN blink"),
@@ -1105,7 +1131,7 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
         ("充電中", "BLUE on"),
     ];
     for (i, (jp, en)) in LEGEND.iter().enumerate() {
-        let y = 370 + i as i32 * 34;
+        let y = 404 + i as i32 * 28;
         draw_jp(bw, red, 32, y, jp, display::GRAY_BLACK);
         let mut ink = Ink::black(bw, red);
         let _ = Text::new(en, Point::new(160, y + 13), mid).draw(&mut ink);
@@ -1175,8 +1201,8 @@ pub fn render_settings(bw: &mut [u8], red: &mut [u8], st: &Status) {
             }
         }
         let mut ink = Ink::black(bw, red);
-        let _ = Text::new(l.as_str(), Point::new(16, 624), mid).draw(&mut ink);
-        let _ = Text::new("hold screen 1s = POWER OFF", Point::new(16, 654), mid).draw(&mut ink);
+        let _ = Text::new(l.as_str(), Point::new(16, 636), mid).draw(&mut ink);
+        let _ = Text::new("hold screen 1s = POWER OFF", Point::new(16, 664), mid).draw(&mut ink);
         let _ = Text::new(
             concat!("nostos-fw v", env!("CARGO_PKG_VERSION")),
             Point::new(16, MAP_Y1 + 24),

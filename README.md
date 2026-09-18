@@ -36,10 +36,12 @@ Nostos（本リポジトリ）はその **PaperMono プロトタイプ兼構想�
 
 ## 現状
 
-- **Phase 2 進行中**（2026-09-13）: [`firmware/nostos-fw`](firmware/nostos-fw/)（Rust/embassy スタンドアロン受信 FW）が実機動作。
-  Nostos-native 生 LoRa（923.000MHz / 16 バイトフレーム）の連続受信 → デコード → HOME/Trail 管理 →
-  e-ink 軌跡マップ描画まで実装。送信側は [`firmware/c6l-beacon`](firmware/c6l-beacon/)（LBT 準拠）。
-- 残り: 帰路ナビ画面・タッチタブ・設定・RGB LED、C6L 側 OLED UI／HOME 長押し確定。
+- **Phase 2 実装完了・屋外フィールドテスト済み**（2026-09-18）: [`firmware/nostos-fw`](firmware/nostos-fw/)
+  （Rust/embassy スタンドアロン受信 FW）で Nostos-native 生 LoRa（923.000MHz / 16 バイトフレーム）の連続受信 →
+  デコード → HOME/Trail 管理 → e-ink 軌跡マップ／帰路ナビ／設定（3 タブ・日本語表示・RGB LED・microSD ログ・
+  軌跡の記録 一時停止）まで実装。送信側は [`firmware/c6l-beacon`](firmware/c6l-beacon/)（LBT 準拠・OLED UI・
+  HOME 長押し確定）。実 GPS で往復約 102 km・受信欠落ゼロを確認（2026-09-17）。
+- 残り: CardputerZero 版への移植（cardputerzero-apps）。
 - 実機実証の記録は [`firmware/nostos-fw/experiments/README.md`](firmware/nostos-fw/experiments/README.md)。
 
 ## ターゲット / スタック

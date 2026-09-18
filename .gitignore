@@ -53,3 +53,6 @@ Desktop.ini
 *.local.yaml
 *_device_config_*.yaml
 secrets.*
+
+# フィールドテストの実機ログ（位置情報を含む・コミット禁止）
+/log/

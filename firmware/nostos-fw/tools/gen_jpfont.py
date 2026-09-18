@@ -5,7 +5,7 @@
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
-CHARS = "軌跡帰路設定明るさ自動消灯凡例受信途絶低電池充電中"
+CHARS = "軌跡帰路設定明るさ自動消灯凡例受信途絶低電池充電中記録"
 SIZE = 16
 FONT_PATH = r"C:\Windows\Fonts\BIZ-UDGothicB.ttc"
 
