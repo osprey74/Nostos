@@ -1,6 +1,6 @@
 # Nostos
 
-> *νόστος* — 帰郷・家路への旅。オフラインの LoRa/Meshtastic を使った「出発点（車）まで戻る」簡易ナビゲーション。
+> *νόστος* — 帰郷・家路への旅。オフラインの LoRa（Nostos 独自の生 LoRa フレーム）を使った「出発点（車）まで戻る」簡易ナビゲーション。
 >
 > ⚖️ **電波法順守は絶対条件です。** 送信ファームは技適の認証範囲内に固定します。
 > 厳守事項は [docs/COMPLIANCE.md](docs/COMPLIANCE.md)（922〜923.4MHz / ≤200kHz / ≤5.0mW・受信は対象外）。
@@ -17,18 +17,19 @@
 
 本リポジトリは **M5Stack PaperMono（ESP32-S3 / SX1262 / 3.97" e-ink）** 上のアプリを扱う。
 
-1. **C6L からの分ごと Meshtastic 通報を受信**（Position パケット：時刻＋緯度経度）
+1. **C6L からの分ごと位置通報を受信**（Nostos-native 16 バイトフレーム：時刻＋緯度経度・923.000MHz。
+   構想初期は Meshtastic を想定していたが、生 LoRa 方式に変更 — [docs/APPROACH.md](docs/APPROACH.md)）
 2. グリッドに過去の計測座標を**プロット**、**線で結んで移動履歴（経路）を e-ink 表示**
 3. （発展）出発点への**帰路方向・距離**を表示
 
-＝「Meshtastic 位置受信＋ブレッドクラム描画」ロジックの実証機。
+＝「LoRa 位置受信＋ブレッドクラム描画」ロジックの実証機。
 
 ## エコシステム連携（最終形）
 
 本アプリで確立した受信＋描画ロジックを、**M5Stack CardputerZero** 側の融合アプリへ展開する：
 
 - 登山・ハイキングで **CardputerZero を携行**（自機 GPS＝App01 gps-logger）
-- **車内に C6L を設置**（車の位置を Meshtastic 送信）
+- **車内に C6L を設置**（車の位置を LoRa で送信）
 - CZ が **App02（lora-mesh-node）の LoRa で C6L の位置を受信** → 自分の移動履歴ルート＋**車への帰路ナビ**
 
 → CardputerZero 側アプリは [`cardputerzero-apps`](../cardputerzero-apps/) リポジトリ（App01 × App02 融合）が担当。
@@ -51,3 +52,13 @@ Nostos（本リポジトリ）はその **PaperMono プロトタイプ兼構想�
 - **無線**: SX1262（Stamp LoRa-1262）868〜923MHz
 - **画面**: 3.97" 480×800 4階調タッチ e-ink（SSD1677）＋フロントライト
 - **確定ルート**: (A) Rust/embassy。BSP は papermono-rs を path 依存で利用 — [docs/APPROACH.md](docs/APPROACH.md)
+
+## ライセンス
+
+[MIT License](LICENSE)。
+
+- BSP [`canardleteer/papermono-rs`](https://github.com/canardleteer/papermono-rs)（MIT）を path 依存で利用
+  （`firmware/nostos-fw` のビルドには本リポジトリと同じ階層に clone が必要）。
+- 日本語グリフ（`firmware/nostos-fw/src/jpfont.rs`）は BIZ UDゴシック（SIL Open Font License 1.1）から
+  `tools/gen_jpfont.py` で生成したビットマップ。
+- Meshtastic ファームウェア（GPL）由来のコードは含まない（`crates/nostos-meshtastic` は初期検証用に独自実装したデコーダ・現行の受信フォーマットは Nostos 独自）。
