@@ -29,6 +29,8 @@ mod jpfont;
 mod led;
 mod lora;
 mod panel;
+#[cfg(feature = "replay")]
+mod replay;
 mod sdlog;
 mod statuslog;
 
@@ -196,20 +198,26 @@ async fn main(_spawner: Spawner) -> ! {
     radio.power_up(&mut i2c).await;
     let radio_ok = radio.probe();
     println!("nostos-fw: sx1262 probe={}", radio_ok as u8);
-    if radio_ok {
+    // 再生ビルド（`replay`）は受信しない（CSV の軌跡に実受信点が混ざらないように）。
+    if radio_ok && !cfg!(feature = "replay") {
         radio.start_rx();
         println!("nostos-fw: rx camp 923.000MHz BW125 SF9 sync 0x3A");
     }
 
     // microSD CSV ロガー（SDHOST 1bit: CLK=GPIO13 / CMD=GPIO12 / DAT0=GPIO11。
     // SD 電源=IOE1 PYG14 は bring_up で投入済み）。カード無しでも受信は継続する。
-    let mut sdlog = sdlog::SdLogger::init(
-        peripherals.SDHOST,
-        peripherals.GPIO13,
-        peripherals.GPIO12,
-        peripherals.GPIO11,
-    )
-    .await;
+    // 再生ビルド（`replay`）は実ログを汚さないよう SD を初期化しない。
+    let mut sdlog = if cfg!(feature = "replay") {
+        None
+    } else {
+        sdlog::SdLogger::init(
+            peripherals.SDHOST,
+            peripherals.GPIO13,
+            peripherals.GPIO12,
+            peripherals.GPIO11,
+        )
+        .await
+    };
     println!(
         "nostos-fw: sdlog {}",
         if sdlog.is_some() { "card ok" } else { "none/fail" }
@@ -273,6 +281,21 @@ async fn main(_spawner: Spawner) -> ! {
     // 止める（停車中の GPS ふらつきで軌跡が汚れるのを防ぐ）。起動時は常に記録 ON（Trail 自体が
     // RAM のみで再起動で空になるため、永続化しない）。
     let mut trail_paused = false;
+
+    // 軌跡 CSV の再生（画面撮影用）。受信時と同じ処理で HOME / Trail を組み立て、
+    // 最終行を最終受信として扱う。
+    #[cfg(feature = "replay")]
+    {
+        for (f, rssi, snr) in replay::frames() {
+            ingest(&f, &mut trail, &mut home, &mut view_center, trail_paused);
+            last = Some(draw::LastRx::from_frame(&f, rssi, snr));
+            rx_count = rx_count.saturating_add(1);
+        }
+        if last.is_some() {
+            last_rx_at = Some(Instant::now());
+        }
+        println!("nostos-fw: REPLAY {} rows, trail={}", rx_count, trail.len());
+    }
 
     // 初期画面（受信待ち）。
     render_and_paint(
@@ -401,43 +424,8 @@ async fn main(_spawner: Spawner) -> ! {
                         pkt.snr,
                         pkt.len
                     );
-                    if f.is_home() {
-                        // 出発点の設定/更新。座標が変わるか、C6L が HOME 再確定（長押し→
-                        // seq リセット）した直後の seq=0 フレームなら新しい行程 → Trail リセット。
-                        let p = f.geopoint();
-                        let changed = f.seq == 0
-                            || home.is_none_or(|h| nostos_nav::haversine_m(h, p) > 1.0);
-                        if changed {
-                            trail = Trail::new();
-                            view_center = None;
-                            println!("nostos-rx: HOME set, trail reset");
-                        }
-                        home = Some(p);
-                    } else if f.has_fix() && trail_paused {
-                        println!("nostos-rx: trail paused, point not recorded");
-                    } else if f.has_fix() {
-                        trail.push(f.geopoint());
-                        // HOME 未受信の間は最古点への距離・方位を参考出力（rxtest 互換）。
-                        let anchor = home.or_else(|| trail.oldest());
-                        if let Some(h) = anchor.and_then(|a| trail.homing(a)) {
-                            println!(
-                                "nostos-rx: trail={} home_set={} home_dist_m={} home_bearing_deg={}",
-                                trail.len(),
-                                home.is_some() as u8,
-                                h.distance_m as i32,
-                                h.bearing_deg as i32
-                            );
-                        }
-                    }
-                    last = Some(draw::LastRx {
-                        seq: f.seq,
-                        fix: f.has_fix(),
-                        lat_e7: f.lat_e7,
-                        lon_e7: f.lon_e7,
-                        time_unix: f.time_unix,
-                        rssi: pkt.rssi,
-                        snr: pkt.snr,
-                    });
+                    ingest(&f, &mut trail, &mut home, &mut view_center, trail_paused);
+                    last = Some(draw::LastRx::from_frame(&f, pkt.rssi, pkt.snr));
                     last_rx_at = Some(Instant::now());
                     rx_count = rx_count.saturating_add(1);
                     rx_lost_logged = false;
@@ -728,6 +716,11 @@ async fn main(_spawner: Spawner) -> ! {
         }
 
         if redraw {
+            // 再生ビルドは撮影用なので、最終受信からの経過（AGE）を常に「今」に保つ。
+            #[cfg(feature = "replay")]
+            if last.is_some() {
+                last_rx_at = Some(Instant::now());
+            }
             render_and_paint(
                 bw,
                 red,
@@ -748,6 +741,46 @@ async fn main(_spawner: Spawner) -> ! {
             )
             .await;
             last_render_at = Instant::now();
+        }
+    }
+}
+
+/// 受信フレームを HOME / Trail に反映する（実受信と CSV 再生で共用）。
+///
+/// `FLAG_HOME` は出発点の設定/更新（座標変化または seq=0 なら Trail リセット）、
+/// fix 付きの通常フレームは Trail へ追加（記録一時停止中は捨てる）。
+fn ingest(
+    f: &NostosFrame,
+    trail: &mut Trail<TRAIL_CAP>,
+    home: &mut Option<GeoPoint>,
+    view_center: &mut Option<GeoPoint>,
+    trail_paused: bool,
+) {
+    if f.is_home() {
+        // 出発点の設定/更新。座標が変わるか、C6L が HOME 再確定（長押し→
+        // seq リセット）した直後の seq=0 フレームなら新しい行程 → Trail リセット。
+        let p = f.geopoint();
+        let changed = f.seq == 0 || home.is_none_or(|h| nostos_nav::haversine_m(h, p) > 1.0);
+        if changed {
+            *trail = Trail::new();
+            *view_center = None;
+            println!("nostos-rx: HOME set, trail reset");
+        }
+        *home = Some(p);
+    } else if f.has_fix() && trail_paused {
+        println!("nostos-rx: trail paused, point not recorded");
+    } else if f.has_fix() {
+        trail.push(f.geopoint());
+        // HOME 未受信の間は最古点への距離・方位を参考出力（rxtest 互換）。
+        let anchor = home.or_else(|| trail.oldest());
+        if let Some(h) = anchor.and_then(|a| trail.homing(a)) {
+            println!(
+                "nostos-rx: trail={} home_set={} home_dist_m={} home_bearing_deg={}",
+                trail.len(),
+                home.is_some() as u8,
+                h.distance_m as i32,
+                h.bearing_deg as i32
+            );
         }
     }
 }

@@ -213,6 +213,27 @@ espflash flash --port COM8 --monitor target\xtensa-esp32s3-none-elf\release\nost
 > 素の SerialPort で COM8 を開くと USB-Serial-JTAG が download モードへ落ちる（詳細は
 > [`experiments/README.md`](experiments/README.md) の注意書き）。
 
+## 軌跡 CSV の再生（撮影用・`--features replay`）
+
+実機ログ（`NOSTOS.CSV`）を実機上で再現し、軌跡タブ／帰路タブの参考画像を撮るための一時機能。
+リポジトリ直下の `log/NOSTOS.CSV`（コミット禁止フォルダ）を**ビルド時に埋め込み**、起動直後に
+受信時と同じ処理（`ingest()`：HOME 設定・seq=0 で Trail リセット・fix 点の追加）で流し込む。
+
+```powershell
+# 全行を再生（最終行＝帰着時点の画面）
+cargo +esp build --release --features replay
+# 先頭 n 行（ヘッダ除く）で止める（例: 2026-09-17 ログの折り返し地点＝199 行目）
+$env:NOSTOS_REPLAY_ROWS = "199"; cargo +esp build --release --features replay; Remove-Item Env:NOSTOS_REPLAY_ROWS
+espflash flash --port COM8 target\xtensa-esp32s3-none-elf\release\nostos-fw
+```
+
+- 再生ビルドは**無線受信を開始せず、microSD も初期化しない**（実受信点の混入・実ログの汚染を防ぐ）。
+  設定タブの SD 表示は「カードなし」になる。
+- ヘッダの AGE は描き直しのたびに 0 へ戻す（時計は最終行の測位時刻）。ズーム・パン・タブ切替は通常どおり。
+- Trail はリング 256 点のため、HOME 以降の fix 点が 256 を超えると出発直後の点から消える
+  （2026-09-17 ログは全行再生で 325 点 → 312 行目までなら全点が残る）。
+- 撮影後は通常ビルド（feature なし）を書き戻すこと。
+
 ## 送信側（テスト）
 
 `firmware/c6l-beacon` を COM7 へ。屋内 GPS なしなら `env:c6l-beacon-dummy`（合成トラック送信）。

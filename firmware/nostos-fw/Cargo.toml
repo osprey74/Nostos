@@ -10,6 +10,12 @@ publish = false
 description = "Nostos PaperMono 受信ファーム（SX1262 受信 → NostosFrame → Trail → e-ink 軌跡表示）"
 license = "MIT"
 
+[features]
+# 軌跡 CSV 再生（画面撮影用の一時機能）。リポジトリ直下 `log/NOSTOS.CSV` をビルド時に埋め込み、
+# 起動直後に受信時と同じ処理で流し込む。無線受信・microSD 書き込みは行わない。
+# 途中まで再生: 環境変数 NOSTOS_REPLAY_ROWS=<行数> を付けてビルド。
+replay = []
+
 # 独立ワークスペース（親の members/exclude と干渉させない）。
 [workspace]
 

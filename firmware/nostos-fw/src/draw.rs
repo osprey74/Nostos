@@ -122,6 +122,21 @@ pub struct LastRx {
     pub snr: i8,
 }
 
+impl LastRx {
+    /// 受信フレームと受信品質から生成。
+    pub fn from_frame(f: &nostos_frame::NostosFrame, rssi: i16, snr: i8) -> Self {
+        Self {
+            seq: f.seq,
+            fix: f.has_fix(),
+            lat_e7: f.lat_e7,
+            lon_e7: f.lon_e7,
+            time_unix: f.time_unix,
+            rssi,
+            snr,
+        }
+    }
+}
+
 /// 固定長フォーマットバッファ（no-alloc で `write!` を受ける）。
 struct FmtBuf<const N: usize> {
     buf: [u8; N],
